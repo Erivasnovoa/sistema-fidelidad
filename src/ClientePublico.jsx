@@ -3,7 +3,6 @@ import {
   addDoc,
   collection,
   doc,
-  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -16,6 +15,8 @@ import {
   DEFAULT_CLIENT_LEVELS,
   normalizeClientLevels,
   obtenerNivelCliente,
+  obtenerNivelClienteDetalle,
+  obtenerProgresoEntreNiveles,
 } from './lib/clientLevels'
 import {
   hashClientPassword,
@@ -65,22 +66,28 @@ const ClientePublico = ({ onAccesoAdmin }) => {
   const [solicitudesPendientesCliente, setSolicitudesPendientesCliente] = useState([])
 
   useEffect(() => {
-    const loadPrizeConfig = async () => {
-      try {
-        const rulesDoc = await getDoc(doc(db, 'configuracionPremios', 'reglas'))
-        if (!rulesDoc.exists()) return
+    const rulesDocRef = doc(db, 'configuracionPremios', 'reglas')
+    const unsubscribe = onSnapshot(
+      rulesDocRef,
+      (rulesDoc) => {
+        if (!rulesDoc.exists()) {
+          setPrizeRules([])
+          setClientLevels(DEFAULT_CLIENT_LEVELS)
+          return
+        }
 
         const data = rulesDoc.data()
         setPrizeRules(normalizePrizeRules(data.reglas || []))
-        if (data.niveles) {
-          setClientLevels(normalizeClientLevels(data.niveles))
-        }
-      } catch (err) {
+        setClientLevels(
+          data.niveles ? normalizeClientLevels(data.niveles) : DEFAULT_CLIENT_LEVELS,
+        )
+      },
+      (err) => {
         console.error(err)
-      }
-    }
+      },
+    )
 
-    loadPrizeConfig()
+    return unsubscribe
   }, [])
 
   useEffect(() => {
@@ -449,16 +456,32 @@ const ClientePublico = ({ onAccesoAdmin }) => {
   }
 
   const puntosDisponibles = cliente?.puntos ?? 0
+  const nivelDetalle = cliente
+    ? obtenerNivelClienteDetalle(puntosDisponibles, clientLevels)
+    : null
   const nivelCliente = cliente
     ? obtenerNivelCliente(puntosDisponibles, clientLevels)
     : 'Sin nivel'
+  const progresoNivel = cliente
+    ? obtenerProgresoEntreNiveles(puntosDisponibles, clientLevels)
+    : null
   const premiosCliente = cliente ? resolveClientPrizes(cliente.premios) : []
   const premiosVisibles = premiosCliente.filter(
     (premio) => premio.statusEfectivo !== STATUS_CANJEADO,
   )
+  // Premios del catálogo desbloqueados por el nivel actual (y niveles inferiores).
   const premiosCatalogoNivel = prizeRules.filter((regla) => (
     clienteAlcanzaNivel(puntosDisponibles, regla.nivelId, clientLevels)
   ))
+  const premiosDelNivelActual = premiosCatalogoNivel.filter(
+    (regla) => regla.nivelId === (nivelDetalle?.id || 'bronce'),
+  )
+  const premiosNivelesInferiores = premiosCatalogoNivel.filter(
+    (regla) => regla.nivelId !== (nivelDetalle?.id || 'bronce'),
+  )
+  const premiosProximosNivel = progresoNivel?.nivelSiguiente
+    ? prizeRules.filter((regla) => regla.nivelId === progresoNivel.nivelSiguiente.id)
+    : []
   const idsPremiosAsignadosActivos = new Set(
     premiosVisibles
       .map((premio) => premio.premioId || premio.id)
@@ -502,7 +525,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
     ? (prizeRules.find((regla) => regla.id === premioCatalogoSeleccionadoId)?.nivelId || null)
     : null
 
-  const premiosCatalogoVisibles = premiosCatalogoNivel.filter((regla) => {
+  const filtrarCatalogoVisible = (reglas) => reglas.filter((regla) => {
     const yaAsignadoActivo = idsPremiosAsignadosActivos.has(regla.id)
     if (yaAsignadoActivo) return false
 
@@ -519,6 +542,13 @@ const ClientePublico = ({ onAccesoAdmin }) => {
 
     return true
   })
+
+  const premiosCatalogoNivelActualVisibles = filtrarCatalogoVisible(premiosDelNivelActual)
+  const premiosCatalogoInferioresVisibles = filtrarCatalogoVisible(premiosNivelesInferiores)
+  const premiosCatalogoVisibles = [
+    ...premiosCatalogoNivelActualVisibles,
+    ...premiosCatalogoInferioresVisibles,
+  ]
   const totalPremiosVisibles = premiosVisibles.length + premiosCatalogoVisibles.length
 
   return (
@@ -818,21 +848,86 @@ const ClientePublico = ({ onAccesoAdmin }) => {
               </article>
             </div>
 
+            {progresoNivel ? (
+              <article className="rounded-3xl border border-amber-800/30 bg-gradient-to-b from-black/80 to-stone-950/85 p-5 shadow-xl shadow-black/40 backdrop-blur-md">
+                <p className="text-[0.7rem] font-bold uppercase tracking-[0.16em] text-amber-200/55">
+                  Tu trayecto
+                </p>
+                <h3 className="mt-1 text-xl font-extrabold text-amber-50">
+                  {progresoNivel.esNivelMaximo
+                    ? `Nivel máximo · ${progresoNivel.nivelActual?.nombre}`
+                    : `${progresoNivel.nivelActual?.nombre} → ${progresoNivel.nivelSiguiente?.nombre}`}
+                </h3>
+                <p className="mt-2 text-sm text-stone-300/70">
+                  {progresoNivel.esNivelMaximo
+                    ? 'Ya alcanzaste el nivel más alto del programa.'
+                    : `Te faltan ${progresoNivel.puntosFaltantes.toLocaleString('es-CR')} pts para ${progresoNivel.nivelSiguiente?.nombre}.`}
+                </p>
+
+                <div className="mt-4 flex items-center justify-between gap-2">
+                  {progresoNivel.niveles.map((nivel, index) => {
+                    const alcanzado = puntosDisponibles >= nivel.puntosMinimos
+                    const esActual = nivel.id === progresoNivel.nivelActual?.id
+                    return (
+                      <div key={nivel.id} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+                        <div
+                          className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold ${
+                            esActual
+                              ? 'bg-amber-500 text-stone-950 ring-2 ring-amber-200/70'
+                              : alcanzado
+                                ? 'bg-emerald-600/90 text-emerald-50'
+                                : 'bg-stone-800 text-stone-400 ring-1 ring-stone-600/60'
+                          }`}
+                        >
+                          {index + 1}
+                        </div>
+                        <span
+                          className={`truncate text-[11px] font-semibold ${
+                            esActual ? 'text-amber-200' : alcanzado ? 'text-emerald-200/80' : 'text-stone-500'
+                          }`}
+                        >
+                          {nivel.nombre}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="mt-4 h-3 overflow-hidden rounded-full bg-stone-900/90 ring-1 ring-white/10">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-amber-600 via-orange-500 to-amber-300 transition-[width] duration-500 ease-out"
+                    style={{ width: `${progresoNivel.porcentaje}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs font-semibold text-stone-400">
+                  <span>{progresoNivel.puntosInicio.toLocaleString('es-CR')} pts</span>
+                  <span className="text-amber-200">
+                    {progresoNivel.porcentaje}%
+                  </span>
+                  <span>
+                    {progresoNivel.esNivelMaximo
+                      ? 'Máximo'
+                      : `${progresoNivel.puntosObjetivo.toLocaleString('es-CR')} pts`}
+                  </span>
+                </div>
+              </article>
+            ) : null}
+
             <article className="rounded-3xl border border-amber-800/30 bg-gradient-to-b from-black/80 to-stone-950/85 p-5 shadow-xl shadow-black/40 backdrop-blur-md sm:p-6">
               <p className="text-[0.7rem] font-bold uppercase tracking-[0.16em] text-amber-200/55">
                 Premios
               </p>
               <h3 className="mt-1 text-xl font-extrabold text-amber-50">
-                Tus recompensas
+                Premios de tu nivel {nivelCliente}
               </h3>
               <p className="mt-2 text-sm text-stone-300/70">
-                Solo puedes elegir un premio por nivel. Al seleccionar uno, los demás de ese nivel se deshabilitan.
+                Solo ves recompensas desbloqueadas por tu nivel actual. Puedes elegir un premio por nivel.
               </p>
 
               <ul className="mt-4 space-y-3">
-                {totalPremiosVisibles === 0 ? (
+                {totalPremiosVisibles === 0 && premiosProximosNivel.length === 0 ? (
                   <li className="rounded-2xl border border-dashed border-amber-800/35 bg-black/40 px-4 py-5 text-center text-sm text-stone-400">
-                    Aún no hay premios disponibles para tu nivel.
+                    Aún no hay premios configurados para tu nivel {nivelCliente}.
                   </li>
                 ) : null}
 
@@ -971,6 +1066,12 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                   )
                 })}
 
+                {premiosCatalogoVisibles.length > 0 ? (
+                  <li className="pt-2 text-[11px] font-bold uppercase tracking-[0.14em] text-amber-200/60">
+                    Disponibles para tu nivel
+                  </li>
+                ) : null}
+
                 {premiosCatalogoVisibles.map((regla) => {
                   const selectionId = `catalogo:${regla.id}`
                   const estaSeleccionado = premioSeleccionadoId === selectionId
@@ -983,6 +1084,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                   const puedeCanjear = !enSolicitud && !bloqueadoPorNivel && puntosDisponibles >= puntosCosto
                   const enviando = canjeLoadingId === selectionId
                   const sePuedeElegir = !enSolicitud && !bloqueadoPorNivel
+                  const esNivelActual = regla.nivelId === (nivelDetalle?.id || 'bronce')
 
                   return (
                     <li key={`catalogo-${regla.id}`}>
@@ -1020,6 +1122,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                             ) : null}
                             <p className="mt-1 text-xs font-semibold text-amber-200/70">
                               {puntosCosto.toLocaleString('es-CR')} pts · Nivel {regla.nivelId}
+                              {esNivelActual ? ' · Tu nivel' : ''}
                             </p>
                             {enSolicitud ? (
                               <p className="mt-2 text-sm font-semibold text-sky-300">
@@ -1100,6 +1203,36 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                     </li>
                   )
                 })}
+
+                {premiosProximosNivel.length > 0 ? (
+                  <li className="pt-3 text-[11px] font-bold uppercase tracking-[0.14em] text-stone-400">
+                    Se desbloquean en {progresoNivel?.nivelSiguiente?.nombre}
+                  </li>
+                ) : null}
+
+                {premiosProximosNivel.map((regla) => (
+                  <li key={`proximo-${regla.id}`}>
+                    <div className="rounded-2xl border border-stone-600/40 bg-stone-950/45 px-4 py-3 opacity-70">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-bold text-stone-200">{regla.nombre}</p>
+                          {regla.descripcion ? (
+                            <p className="mt-0.5 text-sm text-stone-500">{regla.descripcion}</p>
+                          ) : null}
+                          <p className="mt-2 text-sm font-semibold text-stone-400">
+                            Requiere nivel {progresoNivel?.nivelSiguiente?.nombre}
+                            {progresoNivel?.puntosFaltantes
+                              ? ` · Faltan ${progresoNivel.puntosFaltantes.toLocaleString('es-CR')} pts`
+                              : ''}
+                          </p>
+                        </div>
+                        <span className="inline-flex rounded-full bg-stone-500/20 px-2.5 py-1 text-xs font-bold text-stone-300 ring-1 ring-stone-400/40">
+                          Bloqueado
+                        </span>
+                      </div>
+                    </div>
+                  </li>
+                ))}
               </ul>
             </article>
 
