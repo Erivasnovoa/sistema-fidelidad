@@ -88,18 +88,24 @@ const ClientePublico = ({ onAccesoAdmin }) => {
     })
   }, [cliente])
 
+  const limpiarCamposLogin = () => {
+    setTelefono('')
+    setContraseña('')
+    setError('')
+    setSuccessMessage('')
+  }
+
   const cerrarSesionCliente = () => {
     setCliente(null)
     setBusquedaHecha(false)
     setPremioSeleccionadoId(null)
-    setContraseña('')
-    setSuccessMessage('')
-    setError('')
+    limpiarCamposLogin()
   }
 
   const abrirRegistro = (telefonoPrefill = '') => {
     setModo('registro')
     setTelefonoRegistro(telefonoPrefill || telefono.trim())
+    setNombreRegistro('')
     setContraseñaRegistro('')
     setError('')
     setSuccessMessage('')
@@ -110,8 +116,10 @@ const ClientePublico = ({ onAccesoAdmin }) => {
 
   const abrirConsulta = () => {
     setModo('consulta')
-    setError('')
-    setSuccessMessage('')
+    setNombreRegistro('')
+    setTelefonoRegistro('')
+    setContraseñaRegistro('')
+    limpiarCamposLogin()
   }
 
   const handleSearch = async (event) => {
@@ -366,13 +374,13 @@ const ClientePublico = ({ onAccesoAdmin }) => {
             </button>
           </div>
 
-          <div className="mx-auto flex w-full max-w-[280px] flex-col items-center sm:max-w-[320px]">
+          <div className="mx-auto flex w-full max-w-[200px] flex-col items-center sm:max-w-[230px]">
             <img
               src="/vb-smoke-grill-logo.png"
               alt="VB Smoke & Grill"
-              className="h-auto w-full select-none drop-shadow-[0_12px_28px_rgba(220,38,38,0.28)] animate-[brandIn_0.55s_ease-out]"
-              width={640}
-              height={640}
+              className="h-auto w-full select-none drop-shadow-[0_16px_30px_rgba(220,38,38,0.35)] animate-[brandIn_0.55s_ease-out]"
+              width={425}
+              height={660}
               decoding="async"
             />
             <h1 className="sr-only">VB Smoke & Grill</h1>
@@ -396,47 +404,56 @@ const ClientePublico = ({ onAccesoAdmin }) => {
         {modo === 'consulta' && !(cliente && busquedaHecha) ? (
           <form
             onSubmit={handleSearch}
-            className="rounded-3xl border border-amber-800/35 bg-gradient-to-b from-stone-950/85 to-black/80 p-5 shadow-2xl shadow-black/50 backdrop-blur-md sm:p-6"
+            className="rounded-3xl border border-white/10 bg-black/55 p-5 shadow-2xl shadow-black/40 backdrop-blur-md sm:p-6"
+            autoComplete="off"
           >
-            <label htmlFor="telefono-publico" className="block text-sm font-semibold text-amber-100/90">
-              Número de Teléfono
-            </label>
-            <input
-              id="telefono-publico"
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              value={telefono}
-              onChange={(event) => {
-                setTelefono(event.target.value)
-                setError('')
-                setSuccessMessage('')
-              }}
-              placeholder="Ej. 88887777"
-              className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
-            />
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="telefono-publico" className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-amber-100/70">
+                  Teléfono
+                </label>
+                <input
+                  id="telefono-publico"
+                  type="tel"
+                  inputMode="tel"
+                  name="telefono-cliente"
+                  autoComplete="off"
+                  value={telefono}
+                  onChange={(event) => {
+                    setTelefono(event.target.value)
+                    setError('')
+                    setSuccessMessage('')
+                  }}
+                  placeholder="Número de teléfono"
+                  className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-3 text-base text-amber-50 outline-none transition placeholder:text-stone-500 focus:border-amber-400/60 focus:bg-black/30"
+                />
+              </div>
 
-            <label htmlFor="contraseña-publico" className="mt-4 block text-sm font-semibold text-amber-100/90">
-              Contraseña
-            </label>
-            <input
-              id="contraseña-publico"
-              type="password"
-              autoComplete="current-password"
-              value={contraseña}
-              onChange={(event) => {
-                setContraseña(event.target.value)
-                setError('')
-                setSuccessMessage('')
-              }}
-              placeholder="Tu contraseña"
-              className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
-            />
+              <div>
+                <label htmlFor="contraseña-publico" className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-amber-100/70">
+                  Contraseña
+                </label>
+                <input
+                  id="contraseña-publico"
+                  type="password"
+                  name="contraseña-cliente"
+                  autoComplete="new-password"
+                  value={contraseña}
+                  onChange={(event) => {
+                    setContraseña(event.target.value)
+                    setError('')
+                    setSuccessMessage('')
+                  }}
+                  placeholder="Contraseña"
+                  className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-3 text-base text-amber-50 outline-none transition placeholder:text-stone-500 focus:border-amber-400/60 focus:bg-black/30"
+                />
+              </div>
+            </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="mt-4 w-full rounded-2xl bg-gradient-to-r from-amber-700 to-orange-800 px-4 py-3.5 text-sm font-bold uppercase tracking-wide text-amber-50 shadow-lg shadow-orange-950/50 transition hover:from-amber-600 hover:to-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-5 w-full rounded-xl bg-gradient-to-r from-amber-700 to-orange-800 px-4 py-3.5 text-sm font-bold uppercase tracking-wide text-amber-50 transition hover:from-amber-600 hover:to-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? 'Verificando...' : 'Ingresar'}
             </button>
@@ -457,65 +474,73 @@ const ClientePublico = ({ onAccesoAdmin }) => {
         {modo === 'registro' ? (
           <form
             onSubmit={handleRegister}
-            className="rounded-3xl border border-amber-800/35 bg-gradient-to-b from-stone-950/85 to-black/80 p-5 shadow-2xl shadow-black/50 backdrop-blur-md sm:p-6"
+            className="rounded-3xl border border-white/10 bg-black/55 p-5 shadow-2xl shadow-black/40 backdrop-blur-md sm:p-6"
+            autoComplete="off"
           >
-            <p className="mb-4 text-sm text-stone-300/80">
-              Completa tus datos para unirte al programa de fidelidad. Tu contraseña protege tus puntos y premios.
-            </p>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="nombre-registro-publico" className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-amber-100/70">
+                  Nombre
+                </label>
+                <input
+                  id="nombre-registro-publico"
+                  type="text"
+                  name="nombre-cliente"
+                  autoComplete="off"
+                  value={nombreRegistro}
+                  onChange={(event) => {
+                    setNombreRegistro(event.target.value)
+                    setError('')
+                  }}
+                  placeholder="Nombre completo"
+                  className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-3 text-base text-amber-50 outline-none transition placeholder:text-stone-500 focus:border-amber-400/60 focus:bg-black/30"
+                />
+              </div>
 
-            <label htmlFor="nombre-registro-publico" className="block text-sm font-semibold text-amber-100/90">
-              Nombre completo
-            </label>
-            <input
-              id="nombre-registro-publico"
-              type="text"
-              autoComplete="name"
-              value={nombreRegistro}
-              onChange={(event) => {
-                setNombreRegistro(event.target.value)
-                setError('')
-              }}
-              placeholder="Ej. María López"
-              className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
-            />
+              <div>
+                <label htmlFor="telefono-registro-publico" className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-amber-100/70">
+                  Teléfono
+                </label>
+                <input
+                  id="telefono-registro-publico"
+                  type="tel"
+                  inputMode="tel"
+                  name="telefono-registro"
+                  autoComplete="off"
+                  value={telefonoRegistro}
+                  onChange={(event) => {
+                    setTelefonoRegistro(event.target.value)
+                    setError('')
+                  }}
+                  placeholder="Número de teléfono"
+                  className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-3 text-base text-amber-50 outline-none transition placeholder:text-stone-500 focus:border-amber-400/60 focus:bg-black/30"
+                />
+              </div>
 
-            <label htmlFor="telefono-registro-publico" className="mt-4 block text-sm font-semibold text-amber-100/90">
-              Número de Teléfono
-            </label>
-            <input
-              id="telefono-registro-publico"
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              value={telefonoRegistro}
-              onChange={(event) => {
-                setTelefonoRegistro(event.target.value)
-                setError('')
-              }}
-              placeholder="Ej. 88887777"
-              className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
-            />
-
-            <label htmlFor="contraseña-registro-publico" className="mt-4 block text-sm font-semibold text-amber-100/90">
-              Contraseña
-            </label>
-            <input
-              id="contraseña-registro-publico"
-              type="password"
-              autoComplete="new-password"
-              value={contraseñaRegistro}
-              onChange={(event) => {
-                setContraseñaRegistro(event.target.value)
-                setError('')
-              }}
-              placeholder={`Mínimo ${MIN_CLIENT_PASSWORD_LENGTH} caracteres`}
-              className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
-            />
+              <div>
+                <label htmlFor="contraseña-registro-publico" className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.12em] text-amber-100/70">
+                  Contraseña
+                </label>
+                <input
+                  id="contraseña-registro-publico"
+                  type="password"
+                  name="contraseña-registro"
+                  autoComplete="new-password"
+                  value={contraseñaRegistro}
+                  onChange={(event) => {
+                    setContraseñaRegistro(event.target.value)
+                    setError('')
+                  }}
+                  placeholder={`Mínimo ${MIN_CLIENT_PASSWORD_LENGTH} caracteres`}
+                  className="w-full rounded-xl border border-white/15 bg-transparent px-4 py-3 text-base text-amber-50 outline-none transition placeholder:text-stone-500 focus:border-amber-400/60 focus:bg-black/30"
+                />
+              </div>
+            </div>
 
             <button
               type="submit"
               disabled={registroLoading}
-              className="mt-4 w-full rounded-2xl bg-gradient-to-r from-amber-700 to-orange-800 px-4 py-3.5 text-sm font-bold uppercase tracking-wide text-amber-50 shadow-lg shadow-orange-950/50 transition hover:from-amber-600 hover:to-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-5 w-full rounded-xl bg-gradient-to-r from-amber-700 to-orange-800 px-4 py-3.5 text-sm font-bold uppercase tracking-wide text-amber-50 transition hover:from-amber-600 hover:to-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {registroLoading ? 'Registrando...' : 'Crear mi cuenta'}
             </button>
@@ -523,7 +548,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
             <button
               type="button"
               onClick={abrirConsulta}
-              className="mt-3 w-full rounded-2xl border border-amber-800/40 bg-transparent px-4 py-3 text-sm font-semibold text-amber-100/85 transition hover:border-amber-600/50 hover:bg-black/30"
+              className="mt-3 w-full rounded-xl border border-white/15 bg-transparent px-4 py-3 text-sm font-semibold text-amber-100/85 transition hover:border-amber-400/40 hover:bg-black/30"
             >
               Ya tengo cuenta · Ingresar
             </button>
