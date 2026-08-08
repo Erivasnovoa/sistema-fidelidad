@@ -9,30 +9,41 @@ export const normalizeClientLevels = (levels = []) => {
     (Array.isArray(levels) ? levels : [])
       .filter((level) => level?.id && level?.nombre)
       .map((level) => [
-        level.id,
+        String(level.id).toLowerCase(),
         {
-          id: String(level.id),
+          id: String(level.id).toLowerCase(),
           nombre: String(level.nombre),
           puntosMinimos: Math.max(0, Number(level.puntosMinimos) || 0),
         },
       ]),
   )
 
-  return DEFAULT_CLIENT_LEVELS.map((fallback) => (
+  const normalized = DEFAULT_CLIENT_LEVELS.map((fallback) => (
     byId.get(fallback.id) || { ...fallback }
   ))
+
+  // Bronce siempre es el piso del programa (0 pts) para que ningún cliente quede "Sin nivel".
+  const bronce = normalized.find((level) => level.id === 'bronce')
+  if (bronce) {
+    bronce.puntosMinimos = 0
+  }
+
+  return normalized
 }
 
 export const obtenerNivelClienteDetalle = (puntos, levels = DEFAULT_CLIENT_LEVELS) => {
-  const puntosActuales = Number(puntos) || 0
+  const puntosActuales = Math.max(0, Number(puntos) || 0)
   const sortedLevels = [...normalizeClientLevels(levels)].sort(
     (a, b) => b.puntosMinimos - a.puntosMinimos,
   )
-  return sortedLevels.find((level) => puntosActuales >= level.puntosMinimos) || null
+  const alcanzado = sortedLevels.find((level) => puntosActuales >= level.puntosMinimos)
+
+  // Si no alcanza ninguno (config rara), usar el nivel más bajo disponible.
+  return alcanzado || sortedLevels[sortedLevels.length - 1] || DEFAULT_CLIENT_LEVELS[0]
 }
 
 export const obtenerNivelCliente = (puntos, levels = DEFAULT_CLIENT_LEVELS) => (
-  obtenerNivelClienteDetalle(puntos, levels)?.nombre ?? 'Sin nivel'
+  obtenerNivelClienteDetalle(puntos, levels)?.nombre ?? 'Bronce'
 )
 
 export const obtenerNivelPorId = (nivelId, levels = DEFAULT_CLIENT_LEVELS) => {
@@ -43,7 +54,10 @@ export const obtenerNivelPorId = (nivelId, levels = DEFAULT_CLIENT_LEVELS) => {
 /** El cliente alcanza el nivel mínimo del premio (Bronce ⊂ Plata ⊂ Oro). */
 export const clienteAlcanzaNivel = (puntos, nivelMinimoId, levels = DEFAULT_CLIENT_LEVELS) => {
   const nivelCliente = obtenerNivelClienteDetalle(puntos, levels)
-  const nivelRequerido = obtenerNivelPorId(nivelMinimoId || 'bronce', levels)
+  const nivelRequerido = obtenerNivelPorId(
+    String(nivelMinimoId || 'bronce').toLowerCase(),
+    levels,
+  )
 
   if (!nivelCliente || !nivelRequerido) return false
 

@@ -99,9 +99,10 @@ export const calcularPuntosDesdeMonto = (
 
 const VALID_NIVEL_IDS = new Set(['bronce', 'plata', 'oro'])
 
-export const normalizePrizeNivelId = (nivelId) => (
-  VALID_NIVEL_IDS.has(nivelId) ? nivelId : 'bronce'
-)
+export const normalizePrizeNivelId = (nivelId) => {
+  const normalized = String(nivelId || 'bronce').toLowerCase()
+  return VALID_NIVEL_IDS.has(normalized) ? normalized : 'bronce'
+}
 
 export const normalizePrizeRules = (rules = []) =>
   (rules || [])
