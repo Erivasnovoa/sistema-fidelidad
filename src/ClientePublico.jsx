@@ -326,24 +326,38 @@ const ClientePublico = ({ onAccesoAdmin }) => {
       style={{ fontFamily: '"Manrope", sans-serif' }}
     >
       <div className="pointer-events-none fixed inset-0 -z-10" aria-hidden="true">
-        <img
-          src="/bbq-ahumados-fondo.jpg"
-          alt=""
-          className="h-full w-full object-cover object-center"
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(ellipse 90% 60% at 50% -10%, rgba(55, 48, 42, 0.55), transparent 55%),'
+              + 'radial-gradient(ellipse 70% 45% at 80% 100%, rgba(28, 25, 23, 0.9), transparent 50%),'
+              + 'linear-gradient(165deg, #1c1917 0%, #141210 38%, #0c0a09 72%, #080706 100%)',
+          }}
+        />
+        <div
+          className="absolute inset-0 opacity-[0.22]"
+          style={{
+            backgroundImage:
+              'radial-gradient(circle at 20% 30%, rgba(120, 113, 108, 0.18) 0 1px, transparent 1.5px),'
+              + 'radial-gradient(circle at 70% 60%, rgba(87, 83, 78, 0.16) 0 1px, transparent 1.5px),'
+              + 'radial-gradient(circle at 40% 80%, rgba(68, 64, 60, 0.14) 0 1px, transparent 1.5px)',
+            backgroundSize: '18px 18px, 26px 26px, 22px 22px',
+          }}
+        />
+        <div
+          className="absolute inset-0 opacity-[0.12] mix-blend-soft-light"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(125deg, rgba(255,255,255,0.03) 0 1px, transparent 1px 7px),'
+              + 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.25) 2px, rgba(0,0,0,0.25) 3px)',
+          }}
         />
         <div
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(180deg, rgba(10, 6, 4, 0.72) 0%, rgba(18, 10, 6, 0.58) 38%, rgba(12, 7, 4, 0.78) 100%),'
-              + 'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(180, 83, 9, 0.22), transparent 55%)',
-          }}
-        />
-        <div
-          className="absolute inset-0 opacity-[0.07] mix-blend-overlay"
-          style={{
-            backgroundImage:
-              'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.35) 2px, rgba(0,0,0,0.35) 3px)',
+              'radial-gradient(ellipse 55% 40% at 50% 0%, rgba(185, 28, 28, 0.08), transparent 60%)',
           }}
         />
       </div>
