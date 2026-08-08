@@ -16,6 +16,52 @@
   overflow: hidden;
 }
 
+.app-title-bar {
+  padding: 24px 28px 20px;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(236, 72, 153, 0.08));
+}
+
+.app-main-title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #4c1d95;
+}
+
+.app-intro {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.app-subtitle {
+  margin: 0;
+  font-size: 0.98rem;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.app-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.app-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.12);
+  color: #6d28d9;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
 .hero-panel {
   position: relative;
   padding: 36px;
@@ -31,6 +77,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);
   filter: blur(2px);
+  animation: floaty 6s ease-in-out infinite;
 }
 
 .hero-panel::before {
@@ -45,6 +92,17 @@
   height: 180px;
   left: -50px;
   bottom: -70px;
+  animation-delay: 1.2s;
+}
+
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-10px) scale(1.03);
+  }
 }
 
 .hero-badge {

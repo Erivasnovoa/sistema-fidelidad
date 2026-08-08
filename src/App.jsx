@@ -330,6 +330,17 @@ const App = () => {
   return (
     <main className="app-shell">
       <section className="app-card">
+        <div className="app-title-bar">
+          <h1 className="app-main-title">EL BAJONAZO</h1>
+          <div className="app-intro">
+            <p className="app-subtitle">Gestión inteligente de clientes, puntos y premios en una sola experiencia.</p>
+            <div className="app-badges">
+              <span className="app-badge-pill">⚡ Rápido</span>
+              <span className="app-badge-pill">🎯 Premium</span>
+              <span className="app-badge-pill">📊 Modular</span>
+            </div>
+          </div>
+        </div>
         <div className="grid lg:grid-cols-[1.05fr_0.95fr]">
           <div className="hero-panel">
             <div className="hero-badge">Sistema de fidelidad</div>
