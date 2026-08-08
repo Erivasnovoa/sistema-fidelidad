@@ -21,6 +21,13 @@
   background: linear-gradient(135deg, rgba(124, 58, 237, 0.08), rgba(236, 72, 153, 0.08));
 }
 
+.app-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .app-main-title {
   margin: 0;
   font-size: clamp(2rem, 4vw, 3.2rem);
@@ -28,6 +35,35 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: #4c1d95;
+}
+
+.admin-access-btn {
+  flex-shrink: 0;
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #5b21b6;
+  background: rgba(245, 243, 255, 0.9);
+  cursor: pointer;
+  transition: transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.admin-access-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124, 58, 237, 0.4);
+  background: #ede9fe;
+}
+
+.admin-access-btn-light {
+  border-color: rgba(124, 58, 237, 0.18);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.auth-modal-card {
+  width: min(420px, 100%);
 }
 
 .app-intro {

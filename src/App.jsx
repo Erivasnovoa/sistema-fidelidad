@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import { addDoc, collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore'
-import { db } from './lib/firebase'
+import { auth, db } from './lib/firebase'
 import {
   calcularPuntosDesdeMonto,
   canRedeemAssignedPrize,
@@ -137,6 +138,73 @@ const App = () => {
   const [configModalTab, setConfigModalTab] = useState('premios')
   const [clientLevels, setClientLevels] = useState(DEFAULT_CLIENT_LEVELS)
   const [showRegisterModal, setShowRegisterModal] = useState(false)
+  const [user, setUser] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [adminEmail, setAdminEmail] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
+  const [authError, setAuthError] = useState('')
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser)
+      setAuthReady(true)
+
+      if (firebaseUser) {
+        setVistaActual('admin')
+      } else {
+        setVistaActual('cliente')
+        setShowConfigModal(false)
+        setShowRegisterModal(false)
+      }
+    })
+
+    return unsubscribe
+  }, [])
+
+  const handleAdminLogin = async (event) => {
+    event.preventDefault()
+
+    const email = adminEmail.trim()
+    const password = adminPassword
+
+    if (!email || !password) {
+      setAuthError('Ingresa correo y contraseña.')
+      return
+    }
+
+    setAuthLoading(true)
+    setAuthError('')
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password)
+      setShowAuthModal(false)
+      setAdminEmail('')
+      setAdminPassword('')
+      setVistaActual('admin')
+    } catch (err) {
+      console.error(err)
+      setAuthError('No se pudo iniciar sesión. Verifica tus credenciales.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const handleAdminLogout = async () => {
+    setAuthError('')
+
+    try {
+      await signOut(auth)
+      setShowAuthModal(false)
+      setShowConfigModal(false)
+      setShowRegisterModal(false)
+      setVistaActual('cliente')
+    } catch (err) {
+      console.error(err)
+      setError('No se pudo cerrar la sesión. Intenta nuevamente.')
+    }
+  }
 
   const handleSearch = async (event) => {
     event.preventDefault()
@@ -591,33 +659,117 @@ const App = () => {
     return 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200'
   }
 
-  const botonCambioVista = (
-    <button
-      type="button"
-      onClick={() => setVistaActual((actual) => (actual === 'cliente' ? 'admin' : 'cliente'))}
-      className="fixed bottom-3 right-3 z-[100] rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-medium tracking-wide text-white/70 shadow-lg backdrop-blur-sm transition hover:bg-black/65 hover:text-white"
-      title={vistaActual === 'cliente' ? 'Ir a vista administrador' : 'Ir a vista cliente'}
-      aria-label={vistaActual === 'cliente' ? 'Cambiar a vista administrador' : 'Cambiar a vista cliente'}
+  const authModal = showAuthModal ? (
+    <div
+      className="modal-overlay"
+      onClick={() => {
+        if (!authLoading) {
+          setShowAuthModal(false)
+          setAuthError('')
+        }
+      }}
     >
-      {vistaActual === 'cliente' ? 'Admin' : 'Cliente'}
-    </button>
-  )
+      <div
+        className="config-card modal-card auth-modal-card"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="card-title-row">
+          <div>
+            <p className="eyebrow">Administración</p>
+            <h3>Acceso Admin</h3>
+          </div>
+          <button
+            type="button"
+            className="close-modal-btn"
+            disabled={authLoading}
+            onClick={() => {
+              setShowAuthModal(false)
+              setAuthError('')
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        <p className="card-description">
+          Inicia sesión para gestionar premios y registrar clientes.
+        </p>
+        <form className="stacked-form" onSubmit={handleAdminLogin}>
+          <label htmlFor="admin-email" className="field-label">
+            Correo
+          </label>
+          <input
+            id="admin-email"
+            name="admin-email"
+            type="email"
+            autoComplete="username"
+            value={adminEmail}
+            onChange={(event) => {
+              setAdminEmail(event.target.value)
+              setAuthError('')
+            }}
+            placeholder="admin@ejemplo.com"
+            className="input-modern"
+            disabled={authLoading}
+          />
+          <label htmlFor="admin-password" className="field-label">
+            Contraseña
+          </label>
+          <input
+            id="admin-password"
+            name="admin-password"
+            type="password"
+            autoComplete="current-password"
+            value={adminPassword}
+            onChange={(event) => {
+              setAdminPassword(event.target.value)
+              setAuthError('')
+            }}
+            placeholder="••••••••"
+            className="input-modern"
+            disabled={authLoading}
+          />
+          {authError ? <div className="feedback-card feedback-error">{authError}</div> : null}
+          <button type="submit" disabled={authLoading} className="primary-btn">
+            {authLoading ? 'Ingresando...' : 'Iniciar sesión'}
+          </button>
+        </form>
+      </div>
+    </div>
+  ) : null
 
-  if (vistaActual === 'cliente') {
+  if (!authReady) {
+    return null
+  }
+
+  if (vistaActual === 'cliente' || !user) {
     return (
       <>
-        <ClientePublico />
-        {botonCambioVista}
+        <ClientePublico
+          onAccesoAdmin={() => {
+            setAuthError('')
+            setShowAuthModal(true)
+          }}
+        />
+        {authModal}
       </>
     )
   }
 
   return (
     <main className="app-shell">
-      {botonCambioVista}
+      {authModal}
       <section className="app-card">
         <div className="app-title-bar">
-          <h1 className="app-main-title">EL BAJONAZO</h1>
+          <div className="app-title-row">
+            <h1 className="app-main-title">EL BAJONAZO</h1>
+            <button
+              type="button"
+              className="admin-access-btn admin-access-btn-light"
+              onClick={handleAdminLogout}
+            >
+              Cerrar Sesión
+            </button>
+          </div>
           <div className="app-intro">
             <p className="app-subtitle">Gestión inteligente de clientes, puntos y premios en una sola experiencia.</p>
             <div className="app-badges">
@@ -697,33 +849,35 @@ const App = () => {
               {successMessage ? <div className="feedback-card feedback-success">{successMessage}</div> : null}
             </div>
 
-            <div className="action-row">
-              <button
-                type="button"
-                className="floating-config-btn"
-                onClick={() => {
-                  setShowConfigModal(true)
-                  setConfigModalTab('premios')
-                  setError('')
-                  setSuccessMessage('')
-                }}
-              >
-                ⚙️ Configuración de premios
-              </button>
-              <button
-                type="button"
-                className="floating-config-btn register-action-btn"
-                onClick={() => {
-                  setShowRegisterModal(true)
-                  setError('')
-                  setSuccessMessage('')
-                }}
-              >
-                ➕ Registrar cliente
-              </button>
-            </div>
+            {user ? (
+              <div className="action-row">
+                <button
+                  type="button"
+                  className="floating-config-btn"
+                  onClick={() => {
+                    setShowConfigModal(true)
+                    setConfigModalTab('premios')
+                    setError('')
+                    setSuccessMessage('')
+                  }}
+                >
+                  ⚙️ Configuración de premios
+                </button>
+                <button
+                  type="button"
+                  className="floating-config-btn register-action-btn"
+                  onClick={() => {
+                    setShowRegisterModal(true)
+                    setError('')
+                    setSuccessMessage('')
+                  }}
+                >
+                  ➕ Registrar cliente
+                </button>
+              </div>
+            ) : null}
 
-            {showConfigModal ? (
+            {user && showConfigModal ? (
               <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
                 <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
                   <div className="card-title-row">
@@ -916,7 +1070,7 @@ const App = () => {
               </div>
             ) : null}
 
-            {!cliente ? (
+            {user && !cliente ? (
               <div className="secondary-card compact-card">
                 <div className="card-title-row">
                   <div>
@@ -942,7 +1096,7 @@ const App = () => {
               </div>
             ) : null}
 
-            {showRegisterModal ? (
+            {user && showRegisterModal ? (
               <div className="modal-overlay" onClick={() => setShowRegisterModal(false)}>
                 <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
                   <div className="card-title-row">

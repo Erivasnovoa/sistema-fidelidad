@@ -16,7 +16,7 @@ const diasRestantesPremio = (premio) => {
   return Math.max(0, PRIZE_EXPIRATION_DAYS - diasTranscurridos)
 }
 
-const ClientePublico = () => {
+const ClientePublico = ({ onAccesoAdmin }) => {
   const [telefono, setTelefono] = useState('')
   const [cliente, setCliente] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -89,6 +89,15 @@ const ClientePublico = () => {
 
       <div className="mx-auto w-full max-w-md">
         <header className="mb-10 text-center">
+          <div className="mb-4 flex justify-end">
+            <button
+              type="button"
+              onClick={onAccesoAdmin}
+              className="rounded-full border border-violet-300/25 bg-violet-950/60 px-3 py-1.5 text-[11px] font-semibold tracking-wide text-violet-100/85 shadow-sm backdrop-blur-sm transition hover:border-violet-300/45 hover:bg-violet-900/70 hover:text-white"
+            >
+              Acceso Admin
+            </button>
+          </div>
           <p
             className="text-5xl tracking-[0.2em] text-violet-300 sm:text-6xl"
             style={{ fontFamily: '"Bebas Neue", sans-serif' }}
