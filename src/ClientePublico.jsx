@@ -864,57 +864,123 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                     : `Tienes ${progresoNivel.puntosActuales.toLocaleString('es-CR')} pts · Te faltan ${progresoNivel.puntosFaltantes.toLocaleString('es-CR')} pts para ${progresoNivel.nivelSiguiente?.nombre} (${progresoNivel.puntosObjetivo.toLocaleString('es-CR')} pts).`}
                 </p>
 
-                <div className="mt-4 flex items-center justify-between gap-2">
-                  {progresoNivel.niveles.map((nivel, index) => {
-                    const alcanzado = puntosDisponibles >= nivel.puntosMinimos
-                    const esActual = nivel.id === progresoNivel.nivelActual?.id
-                    return (
-                      <div key={nivel.id} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-                        <div
-                          className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold ${
-                            esActual
-                              ? 'bg-amber-500 text-stone-950 ring-2 ring-amber-200/70'
-                              : alcanzado
-                                ? 'bg-emerald-600/90 text-emerald-50'
-                                : 'bg-stone-800 text-stone-400 ring-1 ring-stone-600/60'
-                          }`}
-                        >
-                          {index + 1}
+                {(() => {
+                  const topeTrayecto = Math.max(
+                    1,
+                    ...progresoNivel.niveles.map((nivel) => Number(nivel.puntosMinimos) || 0),
+                  )
+                  const porcentajeBarra = Math.min(
+                    100,
+                    Math.round((progresoNivel.puntosActuales / topeTrayecto) * 100),
+                  )
+                  const posicionNivel = (puntosMinimos) => (
+                    Math.min(100, Math.max(0, ((Number(puntosMinimos) || 0) / topeTrayecto) * 100))
+                  )
+
+                  return (
+                    <>
+                      <div className="relative mt-6 px-1 pt-1">
+                        <div className="relative h-3 overflow-hidden rounded-full bg-stone-900/90 ring-1 ring-white/10">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-amber-600 via-orange-500 to-amber-300 transition-[width] duration-500 ease-out"
+                            style={{ width: `${porcentajeBarra}%` }}
+                          />
                         </div>
-                        <span
-                          className={`truncate text-[11px] font-semibold ${
-                            esActual ? 'text-amber-200' : alcanzado ? 'text-emerald-200/80' : 'text-stone-500'
-                          }`}
-                        >
-                          {nivel.nombre}
+
+                        <div className="pointer-events-none absolute inset-x-1 top-1/2 -translate-y-1/2">
+                          {progresoNivel.niveles.map((nivel, index) => {
+                            const alcanzado = puntosDisponibles >= nivel.puntosMinimos
+                            const esActual = nivel.id === progresoNivel.nivelActual?.id
+                            const left = posicionNivel(nivel.puntosMinimos)
+                            const alInicio = left <= 0
+                            const alFinal = left >= 100
+
+                            return (
+                              <div
+                                key={nivel.id}
+                                className="absolute top-1/2 -translate-y-1/2"
+                                style={{
+                                  left: `${left}%`,
+                                  transform: alInicio
+                                    ? 'translate(0, -50%)'
+                                    : alFinal
+                                      ? 'translate(-100%, -50%)'
+                                      : 'translate(-50%, -50%)',
+                                }}
+                              >
+                                <div
+                                  className={`flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold shadow-md ${
+                                    esActual
+                                      ? 'bg-amber-500 text-stone-950 ring-2 ring-amber-200/70'
+                                      : alcanzado
+                                        ? 'bg-emerald-600/90 text-emerald-50'
+                                        : 'bg-stone-800 text-stone-400 ring-1 ring-stone-600/60'
+                                  }`}
+                                >
+                                  {index + 1}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        <div className="relative mt-5 h-10">
+                          {progresoNivel.niveles.map((nivel) => {
+                            const alcanzado = puntosDisponibles >= nivel.puntosMinimos
+                            const esActual = nivel.id === progresoNivel.nivelActual?.id
+                            const left = posicionNivel(nivel.puntosMinimos)
+                            const alInicio = left <= 0
+                            const alFinal = left >= 100
+
+                            return (
+                              <div
+                                key={`label-${nivel.id}`}
+                                className="absolute top-0 flex w-16 flex-col items-center"
+                                style={{
+                                  left: `${left}%`,
+                                  transform: alInicio
+                                    ? 'translateX(0)'
+                                    : alFinal
+                                      ? 'translateX(-100%)'
+                                      : 'translateX(-50%)',
+                                }}
+                              >
+                                <span
+                                  className={`truncate text-[11px] font-semibold ${
+                                    esActual
+                                      ? 'text-amber-200'
+                                      : alcanzado
+                                        ? 'text-emerald-200/80'
+                                        : 'text-stone-500'
+                                  }`}
+                                >
+                                  {nivel.nombre}
+                                </span>
+                                <span className="text-[10px] text-stone-500">
+                                  {nivel.puntosMinimos.toLocaleString('es-CR')} pts
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between text-xs font-semibold text-stone-400">
+                        <span>
+                          Ahora: {progresoNivel.puntosActuales.toLocaleString('es-CR')} pts
                         </span>
-                        <span className="text-[10px] text-stone-500">
-                          {nivel.puntosMinimos.toLocaleString('es-CR')} pts
+                        <span className="text-amber-200">
+                          {porcentajeBarra}% del trayecto
+                        </span>
+                        <span>
+                          {progresoNivel.esNivelMaximo
+                            ? 'Máximo'
+                            : `Meta: ${progresoNivel.nivelSiguiente?.nombre} ${progresoNivel.puntosObjetivo.toLocaleString('es-CR')} pts`}
                         </span>
                       </div>
-                    )
-                  })}
-                </div>
-
-                <div className="mt-4 h-3 overflow-hidden rounded-full bg-stone-900/90 ring-1 ring-white/10">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-amber-600 via-orange-500 to-amber-300 transition-[width] duration-500 ease-out"
-                    style={{ width: `${progresoNivel.porcentaje}%` }}
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-between text-xs font-semibold text-stone-400">
-                  <span>
-                    Ahora: {progresoNivel.puntosActuales.toLocaleString('es-CR')} pts
-                  </span>
-                  <span className="text-amber-200">
-                    {progresoNivel.porcentaje}%
-                  </span>
-                  <span>
-                    {progresoNivel.esNivelMaximo
-                      ? 'Máximo'
-                      : `${progresoNivel.nivelSiguiente?.nombre}: ${progresoNivel.puntosObjetivo.toLocaleString('es-CR')} pts`}
-                  </span>
-                </div>
+                    </>
+                  )
+                })()}
               </article>
             ) : null}
 
