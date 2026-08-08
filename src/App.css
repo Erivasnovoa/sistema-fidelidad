@@ -473,6 +473,70 @@
   margin-top: 8px;
 }
 
+.level-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+
+.level-filter-chip {
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #64748b;
+  background: #f8fafc;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.level-filter-chip:hover {
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.level-filter-chip-active {
+  border-color: #c4b5fd;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.level-prize-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.level-prize-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.level-prize-summary-item strong {
+  color: #0f172a;
+  font-size: 0.95rem;
+}
+
+.level-prize-summary-item span {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.rule-badge-level {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
 .feedback-stack {
   display: flex;
   flex-direction: column;
@@ -496,6 +560,133 @@
   background: #ecfdf5;
   color: #047857;
   border: 1px solid #a7f3d0;
+}
+
+.canje-toast-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.28) 0%, transparent 42%);
+}
+
+.canje-toast-card {
+  position: relative;
+  width: min(440px, 100%);
+  pointer-events: auto;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  background: linear-gradient(145deg, #111827 0%, #1f2937 55%, #7c2d12 140%);
+  color: #fff7ed;
+  box-shadow:
+    0 24px 60px rgba(15, 23, 42, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  padding: 22px 22px 18px;
+  animation: canjeToastIn 0.35s ease-out;
+}
+
+.canje-toast-pulse {
+  position: absolute;
+  top: -40px;
+  right: -30px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(251, 191, 36, 0.35), transparent 70%);
+  animation: canjePulse 1.8s ease-in-out infinite;
+}
+
+.canje-toast-eyebrow {
+  position: relative;
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #fbbf24;
+}
+
+.canje-toast-title {
+  position: relative;
+  margin: 10px 0 0;
+  font-size: 1.2rem;
+  line-height: 1.35;
+  font-weight: 800;
+  color: #fffbeb;
+}
+
+.canje-toast-meta {
+  position: relative;
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: rgba(254, 243, 199, 0.72);
+}
+
+.canje-toast-actions {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.canje-toast-btn {
+  flex: 1 1 140px;
+  border: none;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 0.92rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, filter 0.15s ease;
+}
+
+.canje-toast-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.canje-toast-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.canje-toast-btn-accept {
+  color: #052e16;
+  background: linear-gradient(135deg, #86efac, #22c55e);
+}
+
+.canje-toast-btn-cancel {
+  color: #fff1f2;
+  background: linear-gradient(135deg, #fb7185, #e11d48);
+}
+
+@keyframes canjeToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes canjePulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
 }
 
 .card-description {
@@ -737,6 +928,13 @@
   margin: 0;
   font-size: 0.88rem;
   color: #64748b;
+}
+
+.prize-level-meta {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #b45309;
 }
 
 .prize-cost {
