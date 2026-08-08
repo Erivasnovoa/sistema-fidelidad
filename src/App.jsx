@@ -355,6 +355,29 @@ const App = () => {
               <span className="app-badge-pill">📊 Modular</span>
             </div>
           </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-violet-200/70 bg-white/80 p-4 shadow-[0_8px_24px_rgba(124,58,237,0.08)] backdrop-blur-sm">
+              <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-violet-500">
+                Puntos Disponibles
+              </p>
+              <p className="mt-1 text-2xl font-extrabold text-violet-700">{puntosDisponibles}</p>
+            </div>
+            <div className="rounded-2xl border border-violet-200/70 bg-white/80 p-4 shadow-[0_8px_24px_rgba(124,58,237,0.08)] backdrop-blur-sm">
+              <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-violet-500">
+                Premios Canjeados
+              </p>
+              <p className="mt-1 text-2xl font-extrabold text-fuchsia-600">{premiosCanjeados}</p>
+            </div>
+            <div className="rounded-2xl border border-violet-200/70 bg-white/80 p-4 shadow-[0_8px_24px_rgba(124,58,237,0.08)] backdrop-blur-sm">
+              <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-violet-500">
+                Nivel de Cliente
+              </p>
+              <p className="mt-1 text-2xl font-extrabold text-amber-600">
+                {getClienteNivel(puntosDisponibles)}
+              </p>
+            </div>
+          </div>
         </div>
         <div className="grid lg:grid-cols-[1.05fr_0.95fr]">
           <div className="hero-panel">
