@@ -61,6 +61,8 @@ const App = () => {
   const [ruleDescription, setRuleDescription] = useState('')
   const [ruleThreshold, setRuleThreshold] = useState('')
   const [rulePointsCost, setRulePointsCost] = useState('')
+  const [editingRuleId, setEditingRuleId] = useState(null)
+  const [showPrizeConfig, setShowPrizeConfig] = useState(false)
 
   const handleSearch = async (event) => {
     event.preventDefault()
@@ -159,20 +161,65 @@ const App = () => {
       return
     }
 
-    const newRule = {
-      id: crypto.randomUUID(),
-      nombre: name,
-      descripcion: description,
-      umbral: threshold,
-      puntosCosto: pointsCost,
+    if (editingRuleId) {
+      setPrizeRules((currentRules) => currentRules.map((rule) => (
+        rule.id === editingRuleId
+          ? { ...rule, nombre: name, descripcion: description, umbral: threshold, puntosCosto: pointsCost }
+          : rule
+      )))
+      setEditingRuleId(null)
+      setSuccessMessage('¡Regla de premio actualizada correctamente!')
+    } else {
+      const newRule = {
+        id: crypto.randomUUID(),
+        nombre: name,
+        descripcion: description,
+        umbral: threshold,
+        puntosCosto: pointsCost,
+      }
+
+      setPrizeRules((currentRules) => [...currentRules, newRule])
+      setSuccessMessage('¡Regla de premio agregada correctamente!')
     }
 
-    setPrizeRules((currentRules) => [...currentRules, newRule])
     setRuleName('')
     setRuleDescription('')
     setRuleThreshold('')
     setRulePointsCost('')
-    setSuccessMessage('¡Regla de premio agregada correctamente!')
+    setError('')
+  }
+
+  const handleEditRule = (rule) => {
+    setEditingRuleId(rule.id)
+    setRuleName(rule.nombre)
+    setRuleDescription(rule.descripcion)
+    setRuleThreshold(String(rule.umbral))
+    setRulePointsCost(String(rule.puntosCosto))
+    setError('')
+    setSuccessMessage('')
+  }
+
+  const handleDeleteRule = (ruleId) => {
+    setPrizeRules((currentRules) => currentRules.filter((rule) => rule.id !== ruleId))
+    if (editingRuleId === ruleId) {
+      setEditingRuleId(null)
+      setRuleName('')
+      setRuleDescription('')
+      setRuleThreshold('')
+      setRulePointsCost('')
+    }
+    setSuccessMessage('¡Regla de premio eliminada correctamente!')
+    setError('')
+  }
+
+  const handleRestoreDefaultRules = () => {
+    setPrizeRules(initialPrizeRules)
+    setEditingRuleId(null)
+    setRuleName('')
+    setRuleDescription('')
+    setRuleThreshold('')
+    setRulePointsCost('')
+    setSuccessMessage('¡Reglas restauradas a los valores por defecto!')
     setError('')
   }
 
@@ -353,85 +400,123 @@ const App = () => {
               {successMessage ? <div className="feedback-card feedback-success">{successMessage}</div> : null}
             </div>
 
-            <div className="config-card">
-              <div className="card-title-row">
-                <div>
-                  <p className="eyebrow">Configuración</p>
-                  <h3>Premios por monto de compra</h3>
-                </div>
-                <div className="avatar-pill">⚙️</div>
-              </div>
-              <p className="card-description">
-                Define reglas de premios según el monto acumulado y visualiza qué recompensas se activan.
-              </p>
+            <button type="button" className="floating-config-btn" onClick={() => setShowPrizeConfig(true)}>
+              ⚙️ Configuración de premios
+            </button>
 
-              <div className="config-grid">
-                <label className="field-label">Monto de compra</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={purchaseAmount}
-                  onChange={(event) => setPurchaseAmount(Number(event.target.value) || 0)}
-                  className="input-modern"
-                  placeholder="Ej. 1200"
-                />
-              </div>
-
-              <form className="stacked-form" onSubmit={handleAddPrizeRule}>
-                <input
-                  type="text"
-                  value={ruleName}
-                  onChange={(event) => setRuleName(event.target.value)}
-                  placeholder="Nombre del premio"
-                  className="input-modern"
-                />
-                <input
-                  type="text"
-                  value={ruleDescription}
-                  onChange={(event) => setRuleDescription(event.target.value)}
-                  placeholder="Descripción"
-                  className="input-modern"
-                />
-                <div className="config-grid">
-                  <input
-                    type="number"
-                    min="0"
-                    value={ruleThreshold}
-                    onChange={(event) => setRuleThreshold(event.target.value)}
-                    placeholder="Umbral ($)"
-                    className="input-modern"
-                  />
-                  <input
-                    type="number"
-                    min="0"
-                    value={rulePointsCost}
-                    onChange={(event) => setRulePointsCost(event.target.value)}
-                    placeholder="Costo en puntos"
-                    className="input-modern"
-                  />
-                </div>
-                <button type="submit" className="secondary-btn">
-                  Agregar regla de premio
-                </button>
-              </form>
-
-              <div className="rules-list">
-                {availablePrizeRules.map((rule) => (
-                  <div key={rule.id} className={`rule-item ${rule.unlocked ? 'rule-item-active' : ''}`}>
+            {showPrizeConfig ? (
+              <div className="modal-overlay" onClick={() => setShowPrizeConfig(false)}>
+                <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
+                  <div className="card-title-row">
                     <div>
-                      <p className="rule-name">{rule.nombre}</p>
-                      <p className="rule-description">{rule.descripcion}</p>
-                      <p className="rule-meta">
-                        Umbral: ${rule.umbral} · Costo: {rule.puntosCosto} pts
-                      </p>
+                      <p className="eyebrow">Configuración</p>
+                      <h3>Premios por monto de compra</h3>
                     </div>
-                    <span className={`rule-badge ${rule.unlocked ? 'rule-badge-active' : ''}`}>
-                      {rule.unlocked ? 'Disponible' : `Faltan $${Math.max(rule.umbral - purchaseAmount, 0)}`}
-                    </span>
+                    <button type="button" className="close-modal-btn" onClick={() => setShowPrizeConfig(false)}>
+                      ✕
+                    </button>
                   </div>
-                ))}
+                  <p className="card-description">
+                    Define reglas de premios según el monto acumulado y visualiza qué recompensas se activan.
+                  </p>
+
+                  <div className="config-grid">
+                    <label className="field-label">Monto de compra</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={purchaseAmount}
+                      onChange={(event) => setPurchaseAmount(Number(event.target.value) || 0)}
+                      className="input-modern"
+                      placeholder="Ej. 1200"
+                    />
+                  </div>
+
+                  <form className="stacked-form" onSubmit={handleAddPrizeRule}>
+                    <input
+                      type="text"
+                      value={ruleName}
+                      onChange={(event) => setRuleName(event.target.value)}
+                      placeholder="Nombre del premio"
+                      className="input-modern"
+                    />
+                    <input
+                      type="text"
+                      value={ruleDescription}
+                      onChange={(event) => setRuleDescription(event.target.value)}
+                      placeholder="Descripción"
+                      className="input-modern"
+                    />
+                    <div className="config-grid">
+                      <input
+                        type="number"
+                        min="0"
+                        value={ruleThreshold}
+                        onChange={(event) => setRuleThreshold(event.target.value)}
+                        placeholder="Umbral (₡)"
+                        className="input-modern"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        value={rulePointsCost}
+                        onChange={(event) => setRulePointsCost(event.target.value)}
+                        placeholder="Costo en puntos"
+                        className="input-modern"
+                      />
+                    </div>
+                    <button type="submit" className="secondary-btn">
+                      {editingRuleId ? 'Guardar cambios' : 'Agregar regla de premio'}
+                    </button>
+                    <button type="button" onClick={handleRestoreDefaultRules} className="ghost-btn">
+                      Restaurar predeterminadas
+                    </button>
+                    {editingRuleId ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingRuleId(null)
+                          setRuleName('')
+                          setRuleDescription('')
+                          setRuleThreshold('')
+                          setRulePointsCost('')
+                          setError('')
+                          setSuccessMessage('')
+                        }}
+                        className="ghost-btn"
+                      >
+                        Cancelar
+                      </button>
+                    ) : null}
+                  </form>
+
+                  <div className="rules-list">
+                    {availablePrizeRules.map((rule) => (
+                      <div key={rule.id} className={`rule-item ${rule.unlocked ? 'rule-item-active' : ''}`}>
+                        <div>
+                          <p className="rule-name">{rule.nombre}</p>
+                          <p className="rule-description">{rule.descripcion}</p>
+                          <p className="rule-meta">
+                            Umbral: ₡{rule.umbral.toLocaleString('es-CR')} · Costo: {rule.puntosCosto} pts
+                          </p>
+                        </div>
+                        <div className="rule-actions">
+                          <span className={`rule-badge ${rule.unlocked ? 'rule-badge-active' : ''}`}>
+                            {rule.unlocked ? 'Disponible' : `Faltan ₡${Math.max(rule.umbral - purchaseAmount, 0).toLocaleString('es-CR')}`}
+                          </span>
+                          <button type="button" className="mini-btn" onClick={() => handleEditRule(rule)}>
+                            Editar
+                          </button>
+                          <button type="button" className="mini-btn danger" onClick={() => handleDeleteRule(rule.id)}>
+                            Eliminar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {!cliente ? (
               <div className="secondary-card">
