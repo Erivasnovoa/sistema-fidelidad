@@ -28,6 +28,19 @@ const initialPrizeRules = [
   },
 ]
 
+const initialClientLevels = [
+  { id: 'bronce', nombre: 'Bronce', puntosMinimos: 0 },
+  { id: 'plata', nombre: 'Plata', puntosMinimos: 500 },
+  { id: 'oro', nombre: 'Oro', puntosMinimos: 1500 },
+  { id: 'platino', nombre: 'Platino', puntosMinimos: 2500 },
+]
+
+const obtenerNivelCliente = (puntos) => {
+  if (puntos >= 500) return '👑 VIP / Oro'
+  if (puntos >= 200) return '🥈 Plata'
+  return '🥉 Bronce'
+}
+
 const App = () => {
   const [telefono, setTelefono] = useState('')
   const [cliente, setCliente] = useState(null)
@@ -62,7 +75,12 @@ const App = () => {
   const [ruleThreshold, setRuleThreshold] = useState('')
   const [rulePointsCost, setRulePointsCost] = useState('')
   const [editingRuleId, setEditingRuleId] = useState(null)
-  const [showPrizeConfig, setShowPrizeConfig] = useState(false)
+  const [isOpenConfigModal, setIsOpenConfigModal] = useState(false)
+  const [configModalTab, setConfigModalTab] = useState('premios')
+  const [clientLevels, setClientLevels] = useState(initialClientLevels)
+  const [levelName, setLevelName] = useState('')
+  const [levelMinPoints, setLevelMinPoints] = useState('')
+  const [editingLevelId, setEditingLevelId] = useState(null)
   const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const handleSearch = async (event) => {
@@ -229,6 +247,74 @@ const App = () => {
     setError('')
   }
 
+  const resetLevelForm = () => {
+    setEditingLevelId(null)
+    setLevelName('')
+    setLevelMinPoints('')
+  }
+
+  const handleAddClientLevel = (event) => {
+    event.preventDefault()
+
+    const name = levelName.trim()
+    const minPoints = Number(levelMinPoints)
+
+    if (!name || Number.isNaN(minPoints) || minPoints < 0) {
+      setError('Completa el nombre del nivel y los puntos mínimos con valores válidos.')
+      setSuccessMessage('')
+      return
+    }
+
+    const duplicatePoints = clientLevels.some(
+      (level) => level.puntosMinimos === minPoints && level.id !== editingLevelId,
+    )
+
+    if (duplicatePoints) {
+      setError('Ya existe un nivel con esos puntos mínimos.')
+      setSuccessMessage('')
+      return
+    }
+
+    if (editingLevelId) {
+      setClientLevels((currentLevels) => currentLevels.map((level) => (
+        level.id === editingLevelId
+          ? { ...level, nombre: name, puntosMinimos: minPoints }
+          : level
+      )))
+      setSuccessMessage('¡Nivel de cliente actualizado correctamente!')
+    } else {
+      setClientLevels((currentLevels) => [
+        ...currentLevels,
+        {
+          id: crypto.randomUUID(),
+          nombre: name,
+          puntosMinimos: minPoints,
+        },
+      ])
+      setSuccessMessage('¡Nivel de cliente agregado correctamente!')
+    }
+
+    resetLevelForm()
+    setError('')
+  }
+
+  const handleEditLevel = (level) => {
+    setEditingLevelId(level.id)
+    setLevelName(level.nombre)
+    setLevelMinPoints(String(level.puntosMinimos))
+    setError('')
+    setSuccessMessage('')
+  }
+
+  const handleDeleteLevel = (levelId) => {
+    setClientLevels((currentLevels) => currentLevels.filter((level) => level.id !== levelId))
+    if (editingLevelId === levelId) {
+      resetLevelForm()
+    }
+    setSuccessMessage('¡Nivel de cliente eliminado correctamente!')
+    setError('')
+  }
+
   const handleRegisterClient = async (event) => {
     event.preventDefault()
 
@@ -335,13 +421,6 @@ const App = () => {
   const availablePrizeRules = getAvailablePrizeRules(prizeRules, purchaseAmount)
   const initials = cliente?.nombre?.charAt(0)?.toUpperCase() ?? 'C'
 
-  const getClienteNivel = (puntos) => {
-    if (puntos >= 2500) return 'Platino'
-    if (puntos >= 1500) return 'Oro'
-    if (puntos >= 500) return 'Plata'
-    return 'Bronce'
-  }
-
   return (
     <main className="app-shell">
       <section className="app-card">
@@ -353,29 +432,6 @@ const App = () => {
               <span className="app-badge-pill">⚡ Rápido</span>
               <span className="app-badge-pill">🎯 Premium</span>
               <span className="app-badge-pill">📊 Modular</span>
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-violet-200/70 bg-white/80 p-4 shadow-[0_8px_24px_rgba(124,58,237,0.08)] backdrop-blur-sm">
-              <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-violet-500">
-                Puntos Disponibles
-              </p>
-              <p className="mt-1 text-2xl font-extrabold text-violet-700">{puntosDisponibles}</p>
-            </div>
-            <div className="rounded-2xl border border-violet-200/70 bg-white/80 p-4 shadow-[0_8px_24px_rgba(124,58,237,0.08)] backdrop-blur-sm">
-              <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-violet-500">
-                Premios Canjeados
-              </p>
-              <p className="mt-1 text-2xl font-extrabold text-fuchsia-600">{premiosCanjeados}</p>
-            </div>
-            <div className="rounded-2xl border border-violet-200/70 bg-white/80 p-4 shadow-[0_8px_24px_rgba(124,58,237,0.08)] backdrop-blur-sm">
-              <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-violet-500">
-                Nivel de Cliente
-              </p>
-              <p className="mt-1 text-2xl font-extrabold text-amber-600">
-                {getClienteNivel(puntosDisponibles)}
-              </p>
             </div>
           </div>
         </div>
@@ -450,7 +506,16 @@ const App = () => {
             </div>
 
             <div className="action-row">
-              <button type="button" className="floating-config-btn" onClick={() => setShowPrizeConfig(true)}>
+              <button
+                type="button"
+                className="floating-config-btn"
+                onClick={() => {
+                  setIsOpenConfigModal(true)
+                  setConfigModalTab('premios')
+                  setError('')
+                  setSuccessMessage('')
+                }}
+              >
                 ⚙️ Configuración de premios
               </button>
               <button
@@ -466,116 +531,205 @@ const App = () => {
               </button>
             </div>
 
-            {showPrizeConfig ? (
-              <div className="modal-overlay" onClick={() => setShowPrizeConfig(false)}>
+            {isOpenConfigModal ? (
+              <div className="modal-overlay" onClick={() => setIsOpenConfigModal(false)}>
                 <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
                   <div className="card-title-row">
                     <div>
-                      <p className="eyebrow">Configuración</p>
-                      <h3>Premios por monto de compra</h3>
+                      <p className="eyebrow">Ajustes</p>
+                      <h3>Configuración General</h3>
                     </div>
-                    <button type="button" className="close-modal-btn" onClick={() => setShowPrizeConfig(false)}>
+                    <button type="button" className="close-modal-btn" onClick={() => setIsOpenConfigModal(false)}>
                       ✕
                     </button>
                   </div>
-                  <p className="card-description">
-                    Define reglas de premios según el monto acumulado y visualiza qué recompensas se activan.
-                  </p>
 
-                  <div className="config-grid">
-                    <label className="field-label">Monto de compra</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={purchaseAmount}
-                      onChange={(event) => setPurchaseAmount(Number(event.target.value) || 0)}
-                      className="input-modern"
-                      placeholder="Ej. 1200"
-                    />
+                  <div className="config-tabs" role="tablist" aria-label="Secciones de configuración">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={configModalTab === 'premios'}
+                      className={`config-tab ${configModalTab === 'premios' ? 'config-tab-active' : ''}`}
+                      onClick={() => setConfigModalTab('premios')}
+                    >
+                      Configuración de Premios
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={configModalTab === 'niveles'}
+                      className={`config-tab ${configModalTab === 'niveles' ? 'config-tab-active' : ''}`}
+                      onClick={() => setConfigModalTab('niveles')}
+                    >
+                      Configuración de Niveles de Cliente
+                    </button>
                   </div>
 
-                  <form className="stacked-form" onSubmit={handleAddPrizeRule}>
-                    <input
-                      type="text"
-                      value={ruleName}
-                      onChange={(event) => setRuleName(event.target.value)}
-                      placeholder="Nombre del premio"
-                      className="input-modern"
-                    />
-                    <input
-                      type="text"
-                      value={ruleDescription}
-                      onChange={(event) => setRuleDescription(event.target.value)}
-                      placeholder="Descripción"
-                      className="input-modern"
-                    />
-                    <div className="config-grid">
-                      <input
-                        type="number"
-                        min="0"
-                        value={ruleThreshold}
-                        onChange={(event) => setRuleThreshold(event.target.value)}
-                        placeholder="Umbral (₡)"
-                        className="input-modern"
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        value={rulePointsCost}
-                        onChange={(event) => setRulePointsCost(event.target.value)}
-                        placeholder="Costo en puntos"
-                        className="input-modern"
-                      />
-                    </div>
-                    <button type="submit" className="secondary-btn">
-                      {editingRuleId ? 'Guardar cambios' : 'Agregar regla de premio'}
-                    </button>
-                    <button type="button" onClick={handleRestoreDefaultRules} className="ghost-btn">
-                      Restaurar predeterminadas
-                    </button>
-                    {editingRuleId ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingRuleId(null)
-                          setRuleName('')
-                          setRuleDescription('')
-                          setRuleThreshold('')
-                          setRulePointsCost('')
-                          setError('')
-                          setSuccessMessage('')
-                        }}
-                        className="ghost-btn"
-                      >
-                        Cancelar
-                      </button>
-                    ) : null}
-                  </form>
+                  {configModalTab === 'premios' ? (
+                    <div className="config-tab-panel">
+                      <p className="card-description">
+                        Define reglas de premios según el monto acumulado y visualiza qué recompensas se activan.
+                      </p>
 
-                  <div className="rules-list">
-                    {availablePrizeRules.map((rule) => (
-                      <div key={rule.id} className={`rule-item ${rule.unlocked ? 'rule-item-active' : ''}`}>
-                        <div>
-                          <p className="rule-name">{rule.nombre}</p>
-                          <p className="rule-description">{rule.descripcion}</p>
-                          <p className="rule-meta">
-                            Umbral: ₡{rule.umbral.toLocaleString('es-CR')} · Costo: {rule.puntosCosto} pts
-                          </p>
-                        </div>
-                        <div className="rule-actions">
-                          <span className={`rule-badge ${rule.unlocked ? 'rule-badge-active' : ''}`}>
-                            {rule.unlocked ? 'Disponible' : `Faltan ₡${Math.max(rule.umbral - purchaseAmount, 0).toLocaleString('es-CR')}`}
-                          </span>
-                          <button type="button" className="mini-btn" onClick={() => handleEditRule(rule)}>
-                            Editar
-                          </button>
-                          <button type="button" className="mini-btn danger" onClick={() => handleDeleteRule(rule.id)}>
-                            Eliminar
-                          </button>
-                        </div>
+                      <div className="config-grid">
+                        <label className="field-label">Monto de compra</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={purchaseAmount}
+                          onChange={(event) => setPurchaseAmount(Number(event.target.value) || 0)}
+                          className="input-modern"
+                          placeholder="Ej. 1200"
+                        />
                       </div>
-                    ))}
-                  </div>
+
+                      <form className="stacked-form" onSubmit={handleAddPrizeRule}>
+                        <input
+                          type="text"
+                          value={ruleName}
+                          onChange={(event) => setRuleName(event.target.value)}
+                          placeholder="Nombre del premio"
+                          className="input-modern"
+                        />
+                        <input
+                          type="text"
+                          value={ruleDescription}
+                          onChange={(event) => setRuleDescription(event.target.value)}
+                          placeholder="Descripción"
+                          className="input-modern"
+                        />
+                        <div className="config-grid">
+                          <input
+                            type="number"
+                            min="0"
+                            value={ruleThreshold}
+                            onChange={(event) => setRuleThreshold(event.target.value)}
+                            placeholder="Umbral (₡)"
+                            className="input-modern"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            value={rulePointsCost}
+                            onChange={(event) => setRulePointsCost(event.target.value)}
+                            placeholder="Costo en puntos"
+                            className="input-modern"
+                          />
+                        </div>
+                        <button type="submit" className="secondary-btn">
+                          {editingRuleId ? 'Guardar cambios' : 'Agregar regla de premio'}
+                        </button>
+                        <button type="button" onClick={handleRestoreDefaultRules} className="ghost-btn">
+                          Restaurar predeterminadas
+                        </button>
+                        {editingRuleId ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingRuleId(null)
+                              setRuleName('')
+                              setRuleDescription('')
+                              setRuleThreshold('')
+                              setRulePointsCost('')
+                              setError('')
+                              setSuccessMessage('')
+                            }}
+                            className="ghost-btn"
+                          >
+                            Cancelar
+                          </button>
+                        ) : null}
+                      </form>
+
+                      <div className="rules-list">
+                        {availablePrizeRules.map((rule) => (
+                          <div key={rule.id} className={`rule-item ${rule.unlocked ? 'rule-item-active' : ''}`}>
+                            <div>
+                              <p className="rule-name">{rule.nombre}</p>
+                              <p className="rule-description">{rule.descripcion}</p>
+                              <p className="rule-meta">
+                                Umbral: ₡{rule.umbral.toLocaleString('es-CR')} · Costo: {rule.puntosCosto} pts
+                              </p>
+                            </div>
+                            <div className="rule-actions">
+                              <span className={`rule-badge ${rule.unlocked ? 'rule-badge-active' : ''}`}>
+                                {rule.unlocked ? 'Disponible' : `Faltan ₡${Math.max(rule.umbral - purchaseAmount, 0).toLocaleString('es-CR')}`}
+                              </span>
+                              <button type="button" className="mini-btn" onClick={() => handleEditRule(rule)}>
+                                Editar
+                              </button>
+                              <button type="button" className="mini-btn danger" onClick={() => handleDeleteRule(rule.id)}>
+                                Eliminar
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="config-tab-panel">
+                      <p className="card-description">
+                        Define el nombre de cada nivel y los puntos mínimos requeridos para alcanzarlo.
+                      </p>
+
+                      <form className="stacked-form" onSubmit={handleAddClientLevel}>
+                        <input
+                          type="text"
+                          value={levelName}
+                          onChange={(event) => setLevelName(event.target.value)}
+                          placeholder="Nombre del nivel"
+                          className="input-modern"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          value={levelMinPoints}
+                          onChange={(event) => setLevelMinPoints(event.target.value)}
+                          placeholder="Puntos mínimos requeridos"
+                          className="input-modern"
+                        />
+                        <button type="submit" className="secondary-btn">
+                          {editingLevelId ? 'Guardar cambios' : 'Agregar nivel'}
+                        </button>
+                        {editingLevelId ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetLevelForm()
+                              setError('')
+                              setSuccessMessage('')
+                            }}
+                            className="ghost-btn"
+                          >
+                            Cancelar
+                          </button>
+                        ) : null}
+                      </form>
+
+                      <div className="rules-list">
+                        {[...clientLevels]
+                          .sort((a, b) => a.puntosMinimos - b.puntosMinimos)
+                          .map((level) => (
+                            <div key={level.id} className="rule-item">
+                              <div>
+                                <p className="rule-name">{level.nombre}</p>
+                                <p className="rule-meta">
+                                  Puntos mínimos: {level.puntosMinimos.toLocaleString('es-CR')} pts
+                                </p>
+                              </div>
+                              <div className="rule-actions">
+                                <button type="button" className="mini-btn" onClick={() => handleEditLevel(level)}>
+                                  Editar
+                                </button>
+                                <button type="button" className="mini-btn danger" onClick={() => handleDeleteLevel(level.id)}>
+                                  Eliminar
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : null}
@@ -659,24 +813,30 @@ const App = () => {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-3">
-                  <div className="min-w-[140px] flex-1 rounded-2xl border border-slate-700/70 bg-gradient-to-br from-slate-900 to-slate-950 p-4 text-white shadow-[0_12px_30px_rgba(15,23,42,0.35)]">
-                    <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-slate-400">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
                       Puntos Disponibles
                     </p>
-                    <p className="mt-1 text-2xl font-extrabold text-violet-300">{puntosDisponibles}</p>
+                    <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
+                      {puntosDisponibles.toLocaleString('es-CR')}
+                    </p>
                   </div>
-                  <div className="min-w-[140px] flex-1 rounded-2xl border border-slate-700/70 bg-gradient-to-br from-slate-900 to-slate-950 p-4 text-white shadow-[0_12px_30px_rgba(15,23,42,0.35)]">
-                    <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
                       Premios Canjeados
                     </p>
-                    <p className="mt-1 text-2xl font-extrabold text-pink-300">{premiosCanjeados}</p>
+                    <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
+                      {premiosCanjeados}
+                    </p>
                   </div>
-                  <div className="min-w-[140px] flex-1 rounded-2xl border border-slate-700/70 bg-gradient-to-br from-slate-900 to-slate-950 p-4 text-white shadow-[0_12px_30px_rgba(15,23,42,0.35)]">
-                    <p className="text-[0.65rem] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
                       Nivel de Cliente
                     </p>
-                    <p className="mt-1 text-2xl font-extrabold text-amber-300">{getClienteNivel(puntosDisponibles)}</p>
+                    <p className="mt-2 text-2xl font-bold tracking-tight text-amber-700">
+                      {obtenerNivelCliente(puntosDisponibles)}
+                    </p>
                   </div>
                 </div>
 
