@@ -322,47 +322,40 @@ const ClientePublico = ({ onAccesoAdmin }) => {
 
   return (
     <main
-      className="cliente-publico relative min-h-screen overflow-x-hidden px-4 py-10 sm:px-6"
-      style={{ fontFamily: '"Manrope", sans-serif' }}
+      className="cliente-publico relative isolate min-h-screen overflow-x-hidden px-4 py-10 sm:px-6"
+      style={{
+        fontFamily: '"Manrope", sans-serif',
+        backgroundColor: '#1a1816',
+        backgroundImage:
+          'radial-gradient(ellipse 100% 70% at 50% -15%, rgba(82, 72, 62, 0.45), transparent 58%),'
+          + 'radial-gradient(ellipse 80% 50% at 100% 100%, rgba(40, 36, 32, 0.85), transparent 55%),'
+          + 'radial-gradient(ellipse 60% 40% at 0% 80%, rgba(50, 44, 38, 0.55), transparent 50%),'
+          + 'linear-gradient(168deg, #2a2622 0%, #1f1c19 32%, #171412 68%, #100e0c 100%)',
+      }}
     >
-      <div className="pointer-events-none fixed inset-0 -z-10" aria-hidden="true">
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(ellipse 90% 60% at 50% -10%, rgba(55, 48, 42, 0.55), transparent 55%),'
-              + 'radial-gradient(ellipse 70% 45% at 80% 100%, rgba(28, 25, 23, 0.9), transparent 50%),'
-              + 'linear-gradient(165deg, #1c1917 0%, #141210 38%, #0c0a09 72%, #080706 100%)',
-          }}
-        />
-        <div
-          className="absolute inset-0 opacity-[0.22]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 20% 30%, rgba(120, 113, 108, 0.18) 0 1px, transparent 1.5px),'
-              + 'radial-gradient(circle at 70% 60%, rgba(87, 83, 78, 0.16) 0 1px, transparent 1.5px),'
-              + 'radial-gradient(circle at 40% 80%, rgba(68, 64, 60, 0.14) 0 1px, transparent 1.5px)',
-            backgroundSize: '18px 18px, 26px 26px, 22px 22px',
-          }}
-        />
-        <div
-          className="absolute inset-0 opacity-[0.12] mix-blend-soft-light"
-          style={{
-            backgroundImage:
-              'repeating-linear-gradient(125deg, rgba(255,255,255,0.03) 0 1px, transparent 1px 7px),'
-              + 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.25) 2px, rgba(0,0,0,0.25) 3px)',
-          }}
-        />
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(ellipse 55% 40% at 50% 0%, rgba(185, 28, 28, 0.08), transparent 60%)',
-          }}
-        />
-      </div>
+      <div
+        className="pointer-events-none absolute inset-0"
+        aria-hidden="true"
+        style={{
+          backgroundImage:
+            'radial-gradient(rgba(168, 162, 158, 0.14) 0.7px, transparent 0.8px),'
+            + 'radial-gradient(rgba(120, 113, 108, 0.1) 0.6px, transparent 0.7px)',
+          backgroundSize: '14px 14px, 28px 28px',
+          backgroundPosition: '0 0, 7px 7px',
+          opacity: 0.55,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-0"
+        aria-hidden="true"
+        style={{
+          backgroundImage:
+            'repeating-linear-gradient(118deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 9px)',
+          opacity: 0.7,
+        }}
+      />
 
-      <div className="mx-auto w-full max-w-md">
+      <div className="relative z-10 mx-auto w-full max-w-md">
         <header
           className="mb-10 text-center"
           style={{
