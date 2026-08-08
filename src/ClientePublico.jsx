@@ -861,7 +861,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                 <p className="mt-2 text-sm text-stone-300/70">
                   {progresoNivel.esNivelMaximo
                     ? 'Ya alcanzaste el nivel más alto del programa.'
-                    : `Te faltan ${progresoNivel.puntosFaltantes.toLocaleString('es-CR')} pts para ${progresoNivel.nivelSiguiente?.nombre}.`}
+                    : `Tienes ${progresoNivel.puntosActuales.toLocaleString('es-CR')} pts · Te faltan ${progresoNivel.puntosFaltantes.toLocaleString('es-CR')} pts para ${progresoNivel.nivelSiguiente?.nombre} (${progresoNivel.puntosObjetivo.toLocaleString('es-CR')} pts).`}
                 </p>
 
                 <div className="mt-4 flex items-center justify-between gap-2">
@@ -888,6 +888,9 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                         >
                           {nivel.nombre}
                         </span>
+                        <span className="text-[10px] text-stone-500">
+                          {nivel.puntosMinimos.toLocaleString('es-CR')} pts
+                        </span>
                       </div>
                     )
                   })}
@@ -900,14 +903,16 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs font-semibold text-stone-400">
-                  <span>{progresoNivel.puntosInicio.toLocaleString('es-CR')} pts</span>
+                  <span>
+                    Ahora: {progresoNivel.puntosActuales.toLocaleString('es-CR')} pts
+                  </span>
                   <span className="text-amber-200">
                     {progresoNivel.porcentaje}%
                   </span>
                   <span>
                     {progresoNivel.esNivelMaximo
                       ? 'Máximo'
-                      : `${progresoNivel.puntosObjetivo.toLocaleString('es-CR')} pts`}
+                      : `${progresoNivel.nivelSiguiente?.nombre}: ${progresoNivel.puntosObjetivo.toLocaleString('es-CR')} pts`}
                   </span>
                 </div>
               </article>

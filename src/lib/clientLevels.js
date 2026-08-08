@@ -73,6 +73,11 @@ export const obtenerProgresoEntreNiveles = (puntos, levels = DEFAULT_CLIENT_LEVE
   const nivelActual = obtenerNivelClienteDetalle(puntosActuales, levels) || niveles[0]
   const indiceActual = Math.max(0, niveles.findIndex((level) => level.id === nivelActual?.id))
   const nivelSiguiente = niveles[indiceActual + 1] || null
+  const topeGlobal = niveles[niveles.length - 1]?.puntosMinimos || 1
+  const porcentajeGlobal = Math.min(
+    100,
+    Math.round((puntosActuales / Math.max(1, topeGlobal)) * 100),
+  )
 
   if (!nivelSiguiente) {
     return {
@@ -84,23 +89,20 @@ export const obtenerProgresoEntreNiveles = (puntos, levels = DEFAULT_CLIENT_LEVE
       puntosObjetivo: nivelActual?.puntosMinimos ?? puntosActuales,
       puntosFaltantes: 0,
       porcentaje: 100,
-      porcentajeGlobal: 100,
+      porcentajeGlobal,
       esNivelMaximo: true,
       indiceActual,
     }
   }
 
   const puntosInicio = nivelActual?.puntosMinimos ?? 0
-  const puntosObjetivo = nivelSiguiente.puntosMinimos
-  const rango = Math.max(1, puntosObjetivo - puntosInicio)
-  const avance = Math.min(rango, Math.max(0, puntosActuales - puntosInicio))
-  const porcentaje = Math.round((avance / rango) * 100)
-
-  const topeGlobal = niveles[niveles.length - 1]?.puntosMinimos || 1
-  const porcentajeGlobal = Math.min(
-    100,
-    Math.round((puntosActuales / Math.max(1, topeGlobal)) * 100),
-  )
+  const puntosObjetivo = Number(nivelSiguiente.puntosMinimos) || 0
+  // Faltante real: umbral del siguiente nivel menos puntos actuales del cliente.
+  const puntosFaltantes = Math.max(0, puntosObjetivo - puntosActuales)
+  // Avance hacia el siguiente nivel (0 → umbral de Plata/Oro).
+  const porcentaje = puntosObjetivo > 0
+    ? Math.min(100, Math.round((puntosActuales / puntosObjetivo) * 100))
+    : 100
 
   return {
     niveles,
@@ -109,7 +111,7 @@ export const obtenerProgresoEntreNiveles = (puntos, levels = DEFAULT_CLIENT_LEVE
     puntosActuales,
     puntosInicio,
     puntosObjetivo,
-    puntosFaltantes: Math.max(0, puntosObjetivo - puntosActuales),
+    puntosFaltantes,
     porcentaje,
     porcentajeGlobal,
     esNivelMaximo: false,
