@@ -187,11 +187,29 @@ export const resolveClientPrizeStatus = (premio, now = new Date()) => {
   return storedStatus === STATUS_VENCIDO ? STATUS_VENCIDO : STATUS_PENDIENTE
 }
 
+/** Normaliza el arreglo de premios del documento cliente (array u objeto map). */
+export const normalizeClientPremios = (premios) => {
+  if (Array.isArray(premios)) {
+    return premios.filter((premio) => premio && typeof premio === 'object')
+  }
+
+  if (premios && typeof premios === 'object') {
+    return Object.values(premios).filter((premio) => premio && typeof premio === 'object')
+  }
+
+  return []
+}
+
 export const resolveClientPrizes = (premios = [], now = new Date()) =>
-  (Array.isArray(premios) ? premios : []).map((premio) => ({
+  normalizeClientPremios(premios).map((premio, index) => ({
     ...premio,
+    id: premio.id || premio.premioId || `premio-${index}-${premio.nombre || 'item'}`,
+    nombre: premio.nombre || 'Premio',
     statusEfectivo: resolveClientPrizeStatus(premio, now),
   }))
 
 export const canRedeemAssignedPrize = (premio, now = new Date()) =>
   resolveClientPrizeStatus(premio, now) === STATUS_PENDIENTE
+
+export const ORIGEN_PREMIO_ASIGNADO = 'asignado'
+export const ORIGEN_PREMIO_CATALOGO = 'catalogo'
