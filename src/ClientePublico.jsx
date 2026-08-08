@@ -325,12 +325,12 @@ const ClientePublico = ({ onAccesoAdmin }) => {
       className="cliente-publico relative isolate min-h-screen overflow-x-hidden px-4 py-10 sm:px-6"
       style={{
         fontFamily: '"Manrope", sans-serif',
-        backgroundColor: '#1a1816',
+        backgroundColor: '#2f3033',
         backgroundImage:
-          'radial-gradient(ellipse 100% 70% at 50% -15%, rgba(82, 72, 62, 0.45), transparent 58%),'
-          + 'radial-gradient(ellipse 80% 50% at 100% 100%, rgba(40, 36, 32, 0.85), transparent 55%),'
-          + 'radial-gradient(ellipse 60% 40% at 0% 80%, rgba(50, 44, 38, 0.55), transparent 50%),'
-          + 'linear-gradient(168deg, #2a2622 0%, #1f1c19 32%, #171412 68%, #100e0c 100%)',
+          'radial-gradient(ellipse 110% 75% at 50% -20%, rgba(90, 92, 98, 0.55), transparent 60%),'
+          + 'radial-gradient(ellipse 70% 55% at 100% 110%, rgba(36, 37, 40, 0.95), transparent 55%),'
+          + 'radial-gradient(ellipse 55% 45% at -10% 85%, rgba(48, 49, 54, 0.8), transparent 50%),'
+          + 'linear-gradient(165deg, #3a3b40 0%, #2f3033 28%, #242528 62%, #1a1b1e 100%)',
       }}
     >
       <div
@@ -338,11 +338,11 @@ const ClientePublico = ({ onAccesoAdmin }) => {
         aria-hidden="true"
         style={{
           backgroundImage:
-            'radial-gradient(rgba(168, 162, 158, 0.14) 0.7px, transparent 0.8px),'
-            + 'radial-gradient(rgba(120, 113, 108, 0.1) 0.6px, transparent 0.7px)',
-          backgroundSize: '14px 14px, 28px 28px',
-          backgroundPosition: '0 0, 7px 7px',
-          opacity: 0.55,
+            'radial-gradient(rgba(210, 210, 215, 0.16) 0.8px, transparent 0.9px),'
+            + 'radial-gradient(rgba(150, 152, 158, 0.12) 0.7px, transparent 0.8px)',
+          backgroundSize: '12px 12px, 24px 24px',
+          backgroundPosition: '0 0, 6px 6px',
+          opacity: 0.7,
         }}
       />
       <div
@@ -350,8 +350,9 @@ const ClientePublico = ({ onAccesoAdmin }) => {
         aria-hidden="true"
         style={{
           backgroundImage:
-            'repeating-linear-gradient(118deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 9px)',
-          opacity: 0.7,
+            'repeating-linear-gradient(122deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 8px),'
+            + 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.18) 3px, rgba(0,0,0,0.18) 4px)',
+          opacity: 0.55,
         }}
       />
 
