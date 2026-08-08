@@ -1,7 +1,20 @@
 import { useEffect, useState } from 'react'
 import { addDoc, collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore'
 import { db } from './lib/firebase'
-import { getAvailablePrizeRules, normalizePrizeRules } from './lib/prizeRules'
+import {
+  calcularPuntosDesdeMonto,
+  canRedeemAssignedPrize,
+  DEFAULT_MONTO_POR_PUNTO,
+  getAvailablePrizeRules,
+  normalizeMontoPorPunto,
+  normalizePrizeRules,
+  resolveClientPrizes,
+  STATUS_CANJEADO,
+  STATUS_PENDIENTE,
+  STATUS_VENCIDO,
+} from './lib/prizeRules'
+import { DEFAULT_CLIENT_LEVELS, obtenerNivelCliente } from './lib/clientLevels'
+import ClientePublico from './ClientePublico'
 import './App.css'
 
 const initialPrizeRules = [
@@ -28,20 +41,56 @@ const initialPrizeRules = [
   },
 ]
 
-const initialClientLevels = [
-  { id: 'bronce', nombre: 'Bronce', puntosMinimos: 0 },
-  { id: 'plata', nombre: 'Plata', puntosMinimos: 500 },
-  { id: 'oro', nombre: 'Oro', puntosMinimos: 1500 },
-]
+const ESTADO_ACTIVO = 'Activo'
+const ESTADO_INACTIVO = 'Inactivo'
+const DIAS_INACTIVIDAD_LIMITE = 60
 
-const obtenerNivelCliente = (puntos, levels = initialClientLevels) => {
-  const sortedLevels = [...levels].sort((a, b) => b.puntosMinimos - a.puntosMinimos)
-  const nivelActual = sortedLevels.find((level) => puntos >= level.puntosMinimos)
+const obtenerEstadoCliente = (cliente) => (
+  cliente?.estado === ESTADO_INACTIVO ? ESTADO_INACTIVO : ESTADO_ACTIVO
+)
 
-  return nivelActual?.nombre ?? 'Sin nivel'
+const diasDesdeFecha = (fechaIso) => {
+  if (!fechaIso) return null
+
+  const fecha = new Date(fechaIso)
+
+  if (Number.isNaN(fecha.getTime())) return null
+
+  const diffMs = Date.now() - fecha.getTime()
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24))
+}
+
+const aplicarReglaInactividad = async (clienteData) => {
+  const puntos = clienteData.puntos ?? 0
+  const diasInactivo = diasDesdeFecha(clienteData.fechaUltimaCompra)
+  const debeInactivar = (
+    diasInactivo !== null
+    && diasInactivo > DIAS_INACTIVIDAD_LIMITE
+    && puntos > 0
+  )
+
+  if (!debeInactivar) {
+    return {
+      ...clienteData,
+      estado: obtenerEstadoCliente(clienteData),
+    }
+  }
+
+  const clienteDocRef = doc(db, 'clientes', clienteData.id)
+  await updateDoc(clienteDocRef, {
+    puntos: 0,
+    estado: ESTADO_INACTIVO,
+  })
+
+  return {
+    ...clienteData,
+    puntos: 0,
+    estado: ESTADO_INACTIVO,
+  }
 }
 
 const App = () => {
+  const [vistaActual, setVistaActual] = useState('cliente')
   const [telefono, setTelefono] = useState('')
   const [cliente, setCliente] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -70,6 +119,15 @@ const App = () => {
     }
   })
   const [purchaseAmount, setPurchaseAmount] = useState(1200)
+  const [montoPorPunto, setMontoPorPunto] = useState(() => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_MONTO_POR_PUNTO
+    }
+
+    const storedRate = window.localStorage.getItem('fidelidad-monto-por-punto')
+    return storedRate ? normalizeMontoPorPunto(storedRate) : DEFAULT_MONTO_POR_PUNTO
+  })
+  const [montoCompraAsignacion, setMontoCompraAsignacion] = useState('')
   const [ruleName, setRuleName] = useState('')
   const [ruleDescription, setRuleDescription] = useState('')
   const [ruleThreshold, setRuleThreshold] = useState('')
@@ -77,7 +135,7 @@ const App = () => {
   const [editingRuleId, setEditingRuleId] = useState(null)
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configModalTab, setConfigModalTab] = useState('premios')
-  const [clientLevels, setClientLevels] = useState(initialClientLevels)
+  const [clientLevels, setClientLevels] = useState(DEFAULT_CLIENT_LEVELS)
   const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const handleSearch = async (event) => {
@@ -93,7 +151,9 @@ const App = () => {
 
     setLoading(true)
     setError('')
+    setSuccessMessage('')
     setCliente(null)
+    setMontoCompraAsignacion('')
 
     try {
       const clientesRef = collection(db, 'clientes')
@@ -106,7 +166,17 @@ const App = () => {
       }
 
       const clienteDoc = snapshot.docs[0]
-      setCliente({ id: clienteDoc.id, ...clienteDoc.data() })
+      const clienteData = { id: clienteDoc.id, ...clienteDoc.data() }
+      const clienteResuelto = await aplicarReglaInactividad(clienteData)
+      setCliente(clienteResuelto)
+
+      if (
+        clienteResuelto.estado === ESTADO_INACTIVO
+        && (clienteData.puntos ?? 0) > 0
+        && (clienteResuelto.puntos ?? 0) === 0
+      ) {
+        setSuccessMessage('Cliente inactivo por más de 60 días: sus puntos se reiniciaron a 0.')
+      }
     } catch (err) {
       setError('No se pudo consultar el cliente. Intenta nuevamente.')
       console.error(err)
@@ -116,28 +186,108 @@ const App = () => {
   }
 
   const handleUpdatePoints = async (amount) => {
-    if (!cliente?.id) return
+    if (!cliente?.id) return false
+
+    if (obtenerEstadoCliente(cliente) === ESTADO_INACTIVO) {
+      setError('El cliente está inactivo. Actívalo para acumular puntos.')
+      setSuccessMessage('')
+      return false
+    }
+
+    const pointsToAdd = Number(amount)
+
+    if (!Number.isFinite(pointsToAdd) || pointsToAdd <= 0) {
+      return false
+    }
 
     setUpdatingPoints(true)
     setError('')
 
     try {
       const clienteDocRef = doc(db, 'clientes', cliente.id)
-      const nextPoints = (cliente.puntos ?? 0) + amount
+      const nextPoints = (cliente.puntos ?? 0) + pointsToAdd
+      const fechaUltimaCompra = new Date().toISOString()
 
-      await updateDoc(clienteDocRef, { puntos: nextPoints })
+      await updateDoc(clienteDocRef, {
+        puntos: nextPoints,
+        fechaUltimaCompra,
+        estado: ESTADO_ACTIVO,
+      })
       setCliente((currentCliente) => (
-        currentCliente ? { ...currentCliente, puntos: nextPoints } : currentCliente
+        currentCliente
+          ? {
+              ...currentCliente,
+              puntos: nextPoints,
+              fechaUltimaCompra,
+              estado: ESTADO_ACTIVO,
+            }
+          : currentCliente
       ))
+      return true
     } catch (err) {
       setError('No se pudieron actualizar los puntos. Intenta nuevamente.')
+      console.error(err)
+      return false
+    } finally {
+      setUpdatingPoints(false)
+    }
+  }
+
+  const handleToggleClienteEstado = async () => {
+    if (!cliente?.id) return
+
+    const estadoActual = obtenerEstadoCliente(cliente)
+    const nextEstado = estadoActual === ESTADO_INACTIVO ? ESTADO_ACTIVO : ESTADO_INACTIVO
+
+    setUpdatingPoints(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const clienteDocRef = doc(db, 'clientes', cliente.id)
+      const updates = { estado: nextEstado }
+
+      if (nextEstado === ESTADO_ACTIVO) {
+        updates.fechaUltimaCompra = new Date().toISOString()
+      }
+
+      await updateDoc(clienteDocRef, updates)
+      setCliente((currentCliente) => (
+        currentCliente
+          ? { ...currentCliente, ...updates }
+          : currentCliente
+      ))
+      setSuccessMessage(
+        nextEstado === ESTADO_ACTIVO
+          ? 'Cliente activado. Ya puede volver a acumular puntos.'
+          : 'Cliente desactivado.',
+      )
+    } catch (err) {
+      setError('No se pudo actualizar el estado del cliente. Intenta nuevamente.')
       console.error(err)
     } finally {
       setUpdatingPoints(false)
     }
   }
 
-  const handleRedeemPrize = async (premio) => {
+  const handleAssignPurchasePoints = async () => {
+    const puntosCalculados = calcularPuntosDesdeMonto(montoCompraAsignacion, montoPorPunto)
+
+    if (puntosCalculados <= 0) {
+      const rate = normalizeMontoPorPunto(montoPorPunto)
+      setError(`Ingresa un monto de al menos $${rate.toLocaleString('es-CR')} para asignar puntos.`)
+      return
+    }
+
+    const updated = await handleUpdatePoints(puntosCalculados)
+
+    if (updated) {
+      setMontoCompraAsignacion('')
+      setSuccessMessage(`Se asignaron ${puntosCalculados.toLocaleString('es-CR')} puntos al cliente.`)
+    }
+  }
+
+  const handleAssignPrize = async (premio) => {
     if (!cliente?.id) return
 
     const puntosActuales = cliente.puntos ?? 0
@@ -147,20 +297,71 @@ const App = () => {
 
     setUpdatingPoints(true)
     setError('')
+    setSuccessMessage('')
 
     try {
       const clienteDocRef = doc(db, 'clientes', cliente.id)
       const nextPoints = puntosActuales - puntosRequeridos
+      const premioAsignado = {
+        id: crypto.randomUUID(),
+        premioId: premio.id,
+        nombre: premio.nombre,
+        descripcion: premio.descripcion || '',
+        puntosCosto: puntosRequeridos,
+        fechaAsignacion: new Date().toISOString(),
+        status: STATUS_PENDIENTE,
+      }
+      const nextPremios = [...(cliente.premios ?? []), premioAsignado]
 
-      const premiosCanjeadosActuales = cliente.premiosCanjeados ?? 0
-      const nextRedeemed = premiosCanjeadosActuales + 1
-
-      await updateDoc(clienteDocRef, { puntos: nextPoints, premiosCanjeados: nextRedeemed })
+      await updateDoc(clienteDocRef, {
+        puntos: nextPoints,
+        premios: nextPremios,
+      })
       setCliente((currentCliente) => (
         currentCliente
-          ? { ...currentCliente, puntos: nextPoints, premiosCanjeados: nextRedeemed }
+          ? { ...currentCliente, puntos: nextPoints, premios: nextPremios }
           : currentCliente
       ))
+      setSuccessMessage(`Premio "${premio.nombre}" asignado. Tienes 30 días para canjearlo.`)
+    } catch (err) {
+      setError('No se pudo asignar el premio. Intenta nuevamente.')
+      console.error(err)
+    } finally {
+      setUpdatingPoints(false)
+    }
+  }
+
+  const handleRedeemAssignedPrize = async (premioAsignado) => {
+    if (!cliente?.id || !premioAsignado?.id) return
+
+    if (!canRedeemAssignedPrize(premioAsignado)) {
+      setError('Este premio está vencido o ya fue canjeado.')
+      return
+    }
+
+    setUpdatingPoints(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const clienteDocRef = doc(db, 'clientes', cliente.id)
+      const nextPremios = (cliente.premios ?? []).map((premio) => (
+        premio.id === premioAsignado.id
+          ? { ...premio, status: STATUS_CANJEADO, fechaCanje: new Date().toISOString() }
+          : premio
+      ))
+      const nextRedeemed = (cliente.premiosCanjeados ?? 0) + 1
+
+      await updateDoc(clienteDocRef, {
+        premios: nextPremios,
+        premiosCanjeados: nextRedeemed,
+      })
+      setCliente((currentCliente) => (
+        currentCliente
+          ? { ...currentCliente, premios: nextPremios, premiosCanjeados: nextRedeemed }
+          : currentCliente
+      ))
+      setSuccessMessage(`Premio "${premioAsignado.nombre}" canjeado correctamente.`)
     } catch (err) {
       setError('No se pudo canjear el premio. Intenta nuevamente.')
       console.error(err)
@@ -284,6 +485,8 @@ const App = () => {
         nombre: nombreTrim,
         telefono: telefonoTrim,
         puntos: 0,
+        estado: ESTADO_ACTIVO,
+        fechaUltimaCompra: new Date().toISOString(),
       })
 
       setNombre('')
@@ -305,14 +508,19 @@ const App = () => {
         const rulesDoc = await getDoc(rulesDocRef)
 
         if (rulesDoc.exists()) {
-          const rulesFromFirestore = normalizePrizeRules(rulesDoc.data().reglas || [])
+          const data = rulesDoc.data()
+          const rulesFromFirestore = normalizePrizeRules(data.reglas || [])
+          const rateFromFirestore = normalizeMontoPorPunto(data.montoPorPunto)
           setPrizeRules(rulesFromFirestore)
+          setMontoPorPunto(rateFromFirestore)
 
           if (typeof window !== 'undefined') {
             window.localStorage.setItem('fidelidad-prize-rules', JSON.stringify(rulesFromFirestore))
+            window.localStorage.setItem('fidelidad-monto-por-punto', String(rateFromFirestore))
           }
         } else if (typeof window !== 'undefined') {
           const storedRules = window.localStorage.getItem('fidelidad-prize-rules')
+          const storedRate = window.localStorage.getItem('fidelidad-monto-por-punto')
 
           if (storedRules) {
             try {
@@ -321,6 +529,10 @@ const App = () => {
             } catch {
               setPrizeRules(initialPrizeRules)
             }
+          }
+
+          if (storedRate) {
+            setMontoPorPunto(normalizeMontoPorPunto(storedRate))
           }
         }
       } catch (err) {
@@ -338,13 +550,17 @@ const App = () => {
       return
     }
 
+    const rate = normalizeMontoPorPunto(montoPorPunto)
+
     window.localStorage.setItem('fidelidad-prize-rules', JSON.stringify(prizeRules))
+    window.localStorage.setItem('fidelidad-monto-por-punto', String(rate))
 
     const syncPrizeRules = async () => {
       try {
         const rulesDocRef = doc(db, 'configuracionPremios', 'reglas')
         await setDoc(rulesDocRef, {
           reglas: prizeRules,
+          montoPorPunto: rate,
           updatedAt: new Date().toISOString(),
         })
       } catch (err) {
@@ -353,16 +569,52 @@ const App = () => {
     }
 
     syncPrizeRules()
-  }, [prizeRules, rulesLoaded])
+  }, [prizeRules, montoPorPunto, rulesLoaded])
 
   const puntosDisponibles = cliente ? (cliente.puntos ?? 0) : 0
   const premiosCanjeados = cliente ? (cliente.premiosCanjeados ?? 0) : 0
   const nivelCliente = cliente ? obtenerNivelCliente(puntosDisponibles, clientLevels) : 'Sin nivel'
   const availablePrizeRules = getAvailablePrizeRules(prizeRules, purchaseAmount)
+  const premiosCliente = cliente ? resolveClientPrizes(cliente.premios) : []
+  const puntosDesdeCompra = calcularPuntosDesdeMonto(montoCompraAsignacion, montoPorPunto)
   const initials = cliente?.nombre?.charAt(0)?.toUpperCase() ?? 'C'
+  const estadoCliente = cliente ? obtenerEstadoCliente(cliente) : ESTADO_ACTIVO
+  const clienteEstaInactivo = estadoCliente === ESTADO_INACTIVO
+
+  const getPrizeStatusBadgeClass = (status) => {
+    if (status === STATUS_CANJEADO) {
+      return 'bg-slate-200 text-slate-600 ring-1 ring-slate-300/80'
+    }
+    if (status === STATUS_VENCIDO) {
+      return 'bg-red-100 text-red-700 ring-1 ring-red-200'
+    }
+    return 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200'
+  }
+
+  const botonCambioVista = (
+    <button
+      type="button"
+      onClick={() => setVistaActual((actual) => (actual === 'cliente' ? 'admin' : 'cliente'))}
+      className="fixed bottom-3 right-3 z-[100] rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-medium tracking-wide text-white/70 shadow-lg backdrop-blur-sm transition hover:bg-black/65 hover:text-white"
+      title={vistaActual === 'cliente' ? 'Ir a vista administrador' : 'Ir a vista cliente'}
+      aria-label={vistaActual === 'cliente' ? 'Cambiar a vista administrador' : 'Cambiar a vista cliente'}
+    >
+      {vistaActual === 'cliente' ? 'Admin' : 'Cliente'}
+    </button>
+  )
+
+  if (vistaActual === 'cliente') {
+    return (
+      <>
+        <ClientePublico />
+        {botonCambioVista}
+      </>
+    )
+  }
 
   return (
     <main className="app-shell">
+      {botonCambioVista}
       <section className="app-card">
         <div className="app-title-bar">
           <h1 className="app-main-title">EL BAJONAZO</h1>
@@ -512,15 +764,45 @@ const App = () => {
                       </p>
 
                       <div className="config-grid">
-                        <label className="field-label">Monto de compra</label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={purchaseAmount}
-                          onChange={(event) => setPurchaseAmount(Number(event.target.value) || 0)}
-                          className="input-modern"
-                          placeholder="Ej. 1200"
-                        />
+                        <div>
+                          <label className="field-label" htmlFor="config-monto-por-punto">
+                            Monto por 1 punto ($)
+                          </label>
+                          <input
+                            id="config-monto-por-punto"
+                            type="number"
+                            min="1"
+                            value={montoPorPunto}
+                            onChange={(event) => {
+                              const nextValue = Number(event.target.value)
+                              if (event.target.value === '' || Number.isNaN(nextValue)) {
+                                setMontoPorPunto('')
+                                return
+                              }
+                              setMontoPorPunto(nextValue > 0 ? nextValue : DEFAULT_MONTO_POR_PUNTO)
+                            }}
+                            onBlur={() => setMontoPorPunto((current) => normalizeMontoPorPunto(current))}
+                            className="input-modern"
+                            placeholder="Ej. 1000"
+                          />
+                          <p className="field-hint">
+                            Ejemplo: con ${normalizeMontoPorPunto(montoPorPunto).toLocaleString('es-CR')} se otorga 1 punto.
+                          </p>
+                        </div>
+                        <div>
+                          <label className="field-label" htmlFor="config-monto-compra-preview">
+                            Monto de compra (vista previa)
+                          </label>
+                          <input
+                            id="config-monto-compra-preview"
+                            type="number"
+                            min="0"
+                            value={purchaseAmount}
+                            onChange={(event) => setPurchaseAmount(Number(event.target.value) || 0)}
+                            className="input-modern"
+                            placeholder="Ej. 1200"
+                          />
+                        </div>
                       </div>
 
                       <form className="stacked-form" onSubmit={handleAddPrizeRule}>
@@ -707,9 +989,36 @@ const App = () => {
               <div className="profile-card">
                 <div className="profile-header">
                   <div className="avatar-circle">{initials}</div>
-                  <div>
-                    <p className="eyebrow">Cliente activo</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="eyebrow">Detalle del cliente</p>
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide shadow-sm ring-2 ${
+                          clienteEstaInactivo
+                            ? 'bg-red-600 text-white ring-red-300 animate-pulse'
+                            : 'bg-emerald-600 text-white ring-emerald-300'
+                        }`}
+                      >
+                        {estadoCliente}
+                      </span>
+                    </div>
                     <h3>{cliente.nombre}</h3>
+                    <button
+                      type="button"
+                      onClick={handleToggleClienteEstado}
+                      disabled={updatingPoints}
+                      className={`mt-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                        clienteEstaInactivo
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60'
+                          : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-60'
+                      }`}
+                    >
+                      {updatingPoints
+                        ? 'Actualizando...'
+                        : clienteEstaInactivo
+                          ? 'Activar Cliente'
+                          : 'Desactivar Cliente'}
+                    </button>
                   </div>
                 </div>
 
@@ -748,39 +1057,95 @@ const App = () => {
                   <span className="phone-badge">{cliente.telefono}</span>
                 </div>
 
-                <div className="quick-actions">
-                  {[100, 250, 500].map((amount) => (
-                    <button
-                      key={amount}
-                      type="button"
-                      onClick={() => handleUpdatePoints(amount)}
-                      disabled={updatingPoints}
-                      className="quick-action-btn"
-                    >
-                      +{amount} pts
-                    </button>
-                  ))}
+                <div className="assign-points-card">
+                  <div>
+                    <p className="eyebrow">Asignación por compra</p>
+                    <h3>Sumar puntos al cliente</h3>
+                  </div>
+
+                  <label className="field-label" htmlFor="monto-compra-asignacion">
+                    Monto de Compra ($)
+                  </label>
+                  <input
+                    id="monto-compra-asignacion"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={montoCompraAsignacion}
+                    onChange={(event) => {
+                      setMontoCompraAsignacion(event.target.value)
+                      setError('')
+                      setSuccessMessage('')
+                    }}
+                    className="input-modern"
+                    placeholder="Ej. 5000"
+                    disabled={updatingPoints || clienteEstaInactivo}
+                  />
+
+                  {clienteEstaInactivo ? (
+                    <p className="mt-2 text-sm font-medium text-red-600">
+                      Cliente inactivo: actívalo para asignar puntos por compra.
+                    </p>
+                  ) : null}
+
+                  <div className="calculated-points-row">
+                    <div>
+                      <p className="points-label">Puntos calculados</p>
+                      <p className="calculated-points-value">
+                        {puntosDesdeCompra.toLocaleString('es-CR')} pts
+                      </p>
+                    </div>
+                    <p className="field-hint">
+                      1 punto por cada ${normalizeMontoPorPunto(montoPorPunto).toLocaleString('es-CR')}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={handleAssignPurchasePoints}
+                    disabled={updatingPoints || clienteEstaInactivo || puntosDesdeCompra <= 0}
+                  >
+                    {updatingPoints ? 'Asignando...' : 'Asignar puntos'}
+                  </button>
+
+                  <div className="quick-actions">
+                    {[100, 250, 500].map((amount) => (
+                      <button
+                        key={amount}
+                        type="button"
+                        onClick={() => handleUpdatePoints(amount)}
+                        disabled={updatingPoints || clienteEstaInactivo}
+                        className="quick-action-btn"
+                      >
+                        +{amount} pts
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="prizes-card">
                   <div className="card-title-row">
                     <div>
                       <p className="eyebrow">Catálogo</p>
-                      <h3>Canjea tus puntos</h3>
+                      <h3>Asignar premio</h3>
                     </div>
                     <span className="points-pill">{puntosDisponibles} pts</span>
                   </div>
+                  <p className="card-description">
+                    Al asignar un premio se descuentan los puntos y queda pendiente de canje por 30 días.
+                  </p>
 
                   <div className="prizes-list">
                     {availablePrizeRules.map((premio) => {
-                      const esCanjeable = puntosDisponibles >= (premio.puntosCosto ?? premio.costo)
+                      const esAsignable = puntosDisponibles >= (premio.puntosCosto ?? premio.costo)
 
                       return (
                         <button
                           key={premio.id}
                           type="button"
-                          onClick={() => handleRedeemPrize(premio)}
-                          disabled={updatingPoints || !esCanjeable}
+                          onClick={() => handleAssignPrize(premio)}
+                          disabled={updatingPoints || !esAsignable}
                           className="prize-item"
                         >
                           <div>
@@ -791,6 +1156,80 @@ const App = () => {
                         </button>
                       )
                     })}
+                  </div>
+                </div>
+
+                <div className="prizes-card mt-3">
+                  <div className="card-title-row">
+                    <div>
+                      <p className="eyebrow">Premios del cliente</p>
+                      <h3>Lista de premios</h3>
+                    </div>
+                    <span className="points-pill">{premiosCliente.length}</span>
+                  </div>
+
+                  <div className="prizes-list">
+                    {premiosCliente.length === 0 ? (
+                      <p className="text-sm text-slate-500">
+                        Este cliente aún no tiene premios asignados.
+                      </p>
+                    ) : (
+                      premiosCliente.map((premio) => {
+                        const status = premio.statusEfectivo
+                        const esCanjeable = status === STATUS_PENDIENTE
+
+                        return (
+                          <div
+                            key={premio.id}
+                            className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="prize-name">{premio.nombre}</p>
+                                <span
+                                  className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${getPrizeStatusBadgeClass(status)}`}
+                                >
+                                  {status}
+                                </span>
+                              </div>
+                              {premio.descripcion ? (
+                                <p className="prize-description">{premio.descripcion}</p>
+                              ) : null}
+                              <p className="mt-1 text-xs text-slate-500">
+                                Asignado:{' '}
+                                {premio.fechaAsignacion
+                                  ? new Date(premio.fechaAsignacion).toLocaleDateString('es-CR')
+                                  : '—'}
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRedeemAssignedPrize(premio)}
+                              disabled={updatingPoints || !esCanjeable}
+                              className={`shrink-0 rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                                esCanjeable
+                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                  : 'cursor-not-allowed bg-slate-100 text-slate-400'
+                              }`}
+                              title={
+                                status === STATUS_VENCIDO
+                                  ? 'Premio vencido: no se puede canjear'
+                                  : status === STATUS_CANJEADO
+                                    ? 'Premio ya canjeado'
+                                    : 'Canjear premio'
+                              }
+                            >
+                              {status === STATUS_CANJEADO
+                                ? 'Canjeado'
+                                : status === STATUS_VENCIDO
+                                  ? 'Vencido'
+                                  : 'Canjear'}
+                            </button>
+                          </div>
+                        )
+                      })
+                    )}
                   </div>
                 </div>
               </div>

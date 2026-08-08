@@ -519,6 +519,45 @@
   font-weight: 800;
 }
 
+.assign-points-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.assign-points-card h3 {
+  margin: 2px 0 0;
+  font-size: 1.05rem;
+}
+
+.calculated-points-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f1f5f9;
+}
+
+.calculated-points-value {
+  margin: 0;
+  font-size: 1.55rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
 .quick-actions {
   display: flex;
   flex-wrap: wrap;
@@ -533,6 +572,12 @@
   border-radius: 999px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.quick-action-btn:disabled,
+.primary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .config-grid {
