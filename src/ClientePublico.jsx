@@ -13,6 +13,13 @@ import {
 import { db } from './lib/firebase'
 import { DEFAULT_CLIENT_LEVELS, obtenerNivelCliente } from './lib/clientLevels'
 import {
+  hashClientPassword,
+  MIN_CLIENT_PASSWORD_LENGTH,
+  stripClientPassword,
+  validateClientPassword,
+  verifyClientPassword,
+} from './lib/clientPassword'
+import {
   getDaysSinceAssignment,
   PRIZE_EXPIRATION_DAYS,
   resolveClientPrizes,
@@ -33,8 +40,10 @@ const diasRestantesPremio = (premio) => {
 const ClientePublico = ({ onAccesoAdmin }) => {
   const [modo, setModo] = useState('consulta') // 'consulta' | 'registro'
   const [telefono, setTelefono] = useState('')
+  const [contraseña, setContraseña] = useState('')
   const [nombreRegistro, setNombreRegistro] = useState('')
   const [telefonoRegistro, setTelefonoRegistro] = useState('')
+  const [contraseñaRegistro, setContraseñaRegistro] = useState('')
   const [cliente, setCliente] = useState(null)
   const [loading, setLoading] = useState(false)
   const [registroLoading, setRegistroLoading] = useState(false)
@@ -52,7 +61,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
       clienteDocRef,
       (snapshot) => {
         if (!snapshot.exists()) return
-        setCliente({ id: snapshot.id, ...snapshot.data() })
+        setCliente(stripClientPassword({ id: snapshot.id, ...snapshot.data() }))
       },
       (err) => {
         console.error(err)
@@ -79,9 +88,19 @@ const ClientePublico = ({ onAccesoAdmin }) => {
     })
   }, [cliente])
 
+  const cerrarSesionCliente = () => {
+    setCliente(null)
+    setBusquedaHecha(false)
+    setPremioSeleccionadoId(null)
+    setContraseña('')
+    setSuccessMessage('')
+    setError('')
+  }
+
   const abrirRegistro = (telefonoPrefill = '') => {
     setModo('registro')
     setTelefonoRegistro(telefonoPrefill || telefono.trim())
+    setContraseñaRegistro('')
     setError('')
     setSuccessMessage('')
     setCliente(null)
@@ -99,9 +118,17 @@ const ClientePublico = ({ onAccesoAdmin }) => {
     event.preventDefault()
 
     const telefonoBuscado = telefono.trim()
+    const passwordCheck = validateClientPassword(contraseña)
 
     if (!telefonoBuscado) {
       setError('Ingresa tu número de teléfono para consultar.')
+      setCliente(null)
+      setBusquedaHecha(false)
+      return
+    }
+
+    if (!passwordCheck.ok) {
+      setError(passwordCheck.error)
       setCliente(null)
       setBusquedaHecha(false)
       return
@@ -120,12 +147,28 @@ const ClientePublico = ({ onAccesoAdmin }) => {
       const snapshot = await getDocs(clientesQuery)
 
       if (snapshot.empty) {
-        setError('No encontramos un cliente con ese teléfono.')
+        setError('Teléfono o contraseña incorrectos.')
         return
       }
 
       const clienteDoc = snapshot.docs[0]
-      setCliente({ id: clienteDoc.id, ...clienteDoc.data() })
+      const clienteData = { id: clienteDoc.id, ...clienteDoc.data() }
+      const storedPassword = clienteData.contraseña || clienteData.contraseñaHash || ''
+
+      if (!storedPassword) {
+        setError('Esta cuenta aún no tiene contraseña. Pide al administrador que te asigne una.')
+        return
+      }
+
+      const esValida = await verifyClientPassword(passwordCheck.password, storedPassword)
+
+      if (!esValida) {
+        setError('Teléfono o contraseña incorrectos.')
+        return
+      }
+
+      setCliente(stripClientPassword(clienteData))
+      setContraseña('')
       setBusquedaHecha(true)
     } catch (err) {
       setError('No se pudo consultar tu información. Intenta de nuevo.')
@@ -140,9 +183,16 @@ const ClientePublico = ({ onAccesoAdmin }) => {
 
     const nombreTrim = nombreRegistro.trim()
     const telefonoTrim = telefonoRegistro.trim()
+    const passwordCheck = validateClientPassword(contraseñaRegistro)
 
     if (!nombreTrim || !telefonoTrim) {
-      setError('Completa tu nombre y teléfono para registrarte.')
+      setError('Completa tu nombre, teléfono y contraseña para registrarte.')
+      setSuccessMessage('')
+      return
+    }
+
+    if (!passwordCheck.ok) {
+      setError(passwordCheck.error)
       setSuccessMessage('')
       return
     }
@@ -157,13 +207,15 @@ const ClientePublico = ({ onAccesoAdmin }) => {
       const snapshot = await getDocs(clientesQuery)
 
       if (!snapshot.empty) {
-        setError('Este número ya está registrado. Usa Consultar para ver tus puntos.')
+        setError('Este número ya está registrado. Usa Consultar con tu contraseña.')
         return
       }
 
+      const contraseñaHash = await hashClientPassword(passwordCheck.password)
       const docRef = await addDoc(clientesRef, {
         nombre: nombreTrim,
         telefono: telefonoTrim,
+        contraseña: contraseñaHash,
         puntos: 0,
         montoPendientePuntos: 0,
         estado: ESTADO_ACTIVO,
@@ -181,8 +233,10 @@ const ClientePublico = ({ onAccesoAdmin }) => {
 
       setCliente(nuevoCliente)
       setTelefono(telefonoTrim)
+      setContraseña('')
       setNombreRegistro('')
       setTelefonoRegistro('')
+      setContraseñaRegistro('')
       setBusquedaHecha(true)
       setModo('consulta')
       setSuccessMessage('¡Registro exitoso! Ya formas parte del programa de fidelidad.')
@@ -257,7 +311,6 @@ const ClientePublico = ({ onAccesoAdmin }) => {
   const premiosCanjeables = premiosVisibles.filter(
     (premio) => premio.statusEfectivo === STATUS_PENDIENTE,
   )
-  const noEncontrado = Boolean(error && error.includes('No encontramos un cliente'))
 
   return (
     <main
@@ -331,12 +384,12 @@ const ClientePublico = ({ onAccesoAdmin }) => {
             style={{ color: 'var(--brand-subtitle)' }}
           >
             {modo === 'registro'
-              ? 'Crea tu cuenta y empieza a acumular puntos'
-              : 'Consulta tus puntos, nivel y canjea tus premios'}
+              ? 'Crea tu cuenta con teléfono y contraseña'
+              : 'Ingresa con tu teléfono y contraseña para ver puntos y canjear'}
           </p>
         </header>
 
-        {modo === 'consulta' ? (
+        {modo === 'consulta' && !(cliente && busquedaHecha) ? (
           <form
             onSubmit={handleSearch}
             className="rounded-3xl border border-amber-800/35 bg-gradient-to-b from-stone-950/85 to-black/80 p-5 shadow-2xl shadow-black/50 backdrop-blur-md sm:p-6"
@@ -359,12 +412,29 @@ const ClientePublico = ({ onAccesoAdmin }) => {
               className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
             />
 
+            <label htmlFor="contraseña-publico" className="mt-4 block text-sm font-semibold text-amber-100/90">
+              Contraseña
+            </label>
+            <input
+              id="contraseña-publico"
+              type="password"
+              autoComplete="current-password"
+              value={contraseña}
+              onChange={(event) => {
+                setContraseña(event.target.value)
+                setError('')
+                setSuccessMessage('')
+              }}
+              placeholder="Tu contraseña"
+              className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
+            />
+
             <button
               type="submit"
               disabled={loading}
               className="mt-4 w-full rounded-2xl bg-gradient-to-r from-amber-700 to-orange-800 px-4 py-3.5 text-sm font-bold uppercase tracking-wide text-amber-50 shadow-lg shadow-orange-950/50 transition hover:from-amber-600 hover:to-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? 'Buscando...' : 'Consultar'}
+              {loading ? 'Verificando...' : 'Ingresar'}
             </button>
 
             <p className="mt-4 text-center text-sm text-stone-400">
@@ -378,13 +448,15 @@ const ClientePublico = ({ onAccesoAdmin }) => {
               </button>
             </p>
           </form>
-        ) : (
+        ) : null}
+
+        {modo === 'registro' ? (
           <form
             onSubmit={handleRegister}
             className="rounded-3xl border border-amber-800/35 bg-gradient-to-b from-stone-950/85 to-black/80 p-5 shadow-2xl shadow-black/50 backdrop-blur-md sm:p-6"
           >
             <p className="mb-4 text-sm text-stone-300/80">
-              Completa tus datos para unirte al programa de fidelidad.
+              Completa tus datos para unirte al programa de fidelidad. Tu contraseña protege tus puntos y premios.
             </p>
 
             <label htmlFor="nombre-registro-publico" className="block text-sm font-semibold text-amber-100/90">
@@ -420,6 +492,22 @@ const ClientePublico = ({ onAccesoAdmin }) => {
               className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
             />
 
+            <label htmlFor="contraseña-registro-publico" className="mt-4 block text-sm font-semibold text-amber-100/90">
+              Contraseña
+            </label>
+            <input
+              id="contraseña-registro-publico"
+              type="password"
+              autoComplete="new-password"
+              value={contraseñaRegistro}
+              onChange={(event) => {
+                setContraseñaRegistro(event.target.value)
+                setError('')
+              }}
+              placeholder={`Mínimo ${MIN_CLIENT_PASSWORD_LENGTH} caracteres`}
+              className="mt-2 w-full rounded-2xl border border-amber-800/40 bg-black/50 px-4 py-3.5 text-base text-amber-50 outline-none transition placeholder:text-stone-400 focus:border-amber-500/70 focus:ring-2 focus:ring-amber-600/35"
+            />
+
             <button
               type="submit"
               disabled={registroLoading}
@@ -433,23 +521,14 @@ const ClientePublico = ({ onAccesoAdmin }) => {
               onClick={abrirConsulta}
               className="mt-3 w-full rounded-2xl border border-amber-800/40 bg-transparent px-4 py-3 text-sm font-semibold text-amber-100/85 transition hover:border-amber-600/50 hover:bg-black/30"
             >
-              Ya tengo cuenta · Consultar
+              Ya tengo cuenta · Ingresar
             </button>
           </form>
-        )}
+        ) : null}
 
         {error ? (
           <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-950/60 px-4 py-3 text-sm font-medium text-rose-200 backdrop-blur-sm">
             <p>{error}</p>
-            {noEncontrado ? (
-              <button
-                type="button"
-                onClick={() => abrirRegistro(telefono)}
-                className="mt-3 w-full rounded-xl bg-amber-700/90 px-3 py-2.5 text-sm font-bold text-amber-50 transition hover:bg-amber-600"
-              >
-                Registrarme con este teléfono
-              </button>
-            ) : null}
           </div>
         ) : null}
 
@@ -462,12 +541,23 @@ const ClientePublico = ({ onAccesoAdmin }) => {
         {cliente && busquedaHecha ? (
           <section className="mt-6 space-y-4 animate-[fadeUp_0.45s_ease-out]">
             <div className="rounded-3xl border border-amber-800/30 bg-gradient-to-br from-stone-950/80 via-black/75 to-orange-950/40 p-5 shadow-xl shadow-black/40 backdrop-blur-md">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/60">
-                Hola
-              </p>
-              <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-amber-50">
-                {cliente.nombre}
-              </h2>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/60">
+                    Hola
+                  </p>
+                  <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-amber-50">
+                    {cliente.nombre}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={cerrarSesionCliente}
+                  className="shrink-0 rounded-full border border-amber-700/40 bg-black/40 px-3 py-1.5 text-[11px] font-semibold text-amber-100/85 transition hover:border-amber-500/50 hover:bg-black/60"
+                >
+                  Cerrar sesión
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3">
@@ -631,7 +721,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
             </article>
 
             <p className="text-center text-xs text-stone-500">
-              Selecciona un premio y solicita el canje · Requiere aprobación del administrador
+              Acceso protegido con contraseña · El canje requiere aprobación del administrador
             </p>
           </section>
         ) : null}

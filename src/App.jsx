@@ -39,6 +39,11 @@ import {
   obtenerNivelCliente,
   obtenerNivelPorId,
 } from './lib/clientLevels'
+import {
+  hashClientPassword,
+  MIN_CLIENT_PASSWORD_LENGTH,
+  validateClientPassword,
+} from './lib/clientPassword'
 import ClientePublico from './ClientePublico'
 import './App.css'
 
@@ -134,6 +139,8 @@ const App = () => {
   const [error, setError] = useState('')
   const [nombre, setNombre] = useState('')
   const [telefonoRegistro, setTelefonoRegistro] = useState('')
+  const [contraseñaRegistro, setContraseñaRegistro] = useState('')
+  const [contraseñaClienteAdmin, setContraseñaClienteAdmin] = useState('')
   const [registroLoading, setRegistroLoading] = useState(false)
   const [successMessage, setSuccessMessage] = useState('')
   const [rulesLoaded, setRulesLoaded] = useState(false)
@@ -308,6 +315,7 @@ const App = () => {
     setSuccessMessage('')
     setCliente(null)
     setMontoCompraAsignacion('')
+    setContraseñaClienteAdmin('')
 
     try {
       const clientesRef = collection(db, 'clientes')
@@ -800,14 +808,55 @@ const App = () => {
     )))
   }
 
+  const handleSetClientPassword = async (event) => {
+    event.preventDefault()
+
+    if (!cliente?.id) return
+
+    const passwordCheck = validateClientPassword(contraseñaClienteAdmin)
+    if (!passwordCheck.ok) {
+      setError(passwordCheck.error)
+      setSuccessMessage('')
+      return
+    }
+
+    setUpdatingPoints(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const contraseñaHash = await hashClientPassword(passwordCheck.password)
+      await updateDoc(doc(db, 'clientes', cliente.id), {
+        contraseña: contraseñaHash,
+      })
+      setCliente((current) => (
+        current ? { ...current, contraseña: contraseñaHash } : current
+      ))
+      setContraseñaClienteAdmin('')
+      setSuccessMessage(`Contraseña actualizada para ${cliente.nombre}.`)
+    } catch (err) {
+      setError('No se pudo actualizar la contraseña del cliente.')
+      console.error(err)
+    } finally {
+      setUpdatingPoints(false)
+    }
+  }
+
   const handleRegisterClient = async (event) => {
     event.preventDefault()
 
     const nombreTrim = nombre.trim()
     const telefonoTrim = telefonoRegistro.trim()
+    const passwordCheck = validateClientPassword(contraseñaRegistro)
 
     if (!nombreTrim || !telefonoTrim) {
-      setError('Completa nombre y teléfono para registrar al cliente.')
+      setError('Completa nombre, teléfono y contraseña para registrar al cliente.')
+      setSuccessMessage('')
+      return
+    }
+
+    if (!passwordCheck.ok) {
+      setError(passwordCheck.error)
       setSuccessMessage('')
       return
     }
@@ -826,9 +875,12 @@ const App = () => {
         return
       }
 
+      const contraseñaHash = await hashClientPassword(passwordCheck.password)
+
       await addDoc(clientesRef, {
         nombre: nombreTrim,
         telefono: telefonoTrim,
+        contraseña: contraseñaHash,
         puntos: 0,
         montoPendientePuntos: 0,
         estado: ESTADO_ACTIVO,
@@ -837,6 +889,7 @@ const App = () => {
 
       setNombre('')
       setTelefonoRegistro('')
+      setContraseñaRegistro('')
       setShowRegisterModal(false)
       setSuccessMessage('¡Cliente registrado con éxito!')
     } catch (err) {
@@ -1473,19 +1526,32 @@ const App = () => {
             ) : null}
 
             {user && showRegisterModal ? (
-              <div className="modal-overlay" onClick={() => setShowRegisterModal(false)}>
+              <div
+                className="modal-overlay"
+                onClick={() => {
+                  setShowRegisterModal(false)
+                  setContraseñaRegistro('')
+                }}
+              >
                 <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
                   <div className="card-title-row">
                     <div>
                       <p className="eyebrow">Nuevo ingreso</p>
                       <h3>Registrar cliente</h3>
                     </div>
-                    <button type="button" className="close-modal-btn" onClick={() => setShowRegisterModal(false)}>
+                    <button
+                      type="button"
+                      className="close-modal-btn"
+                      onClick={() => {
+                        setShowRegisterModal(false)
+                        setContraseñaRegistro('')
+                      }}
+                    >
                       ✕
                     </button>
                   </div>
                   <p className="card-description">
-                    Completa los datos del cliente para crear su perfil y comenzar su recorrido de puntos.
+                    Completa los datos del cliente, incluida su contraseña, para que pueda consultar y canjear desde la vista pública.
                   </p>
 
                   <form className="stacked-form" onSubmit={handleRegisterClient}>
@@ -1505,6 +1571,16 @@ const App = () => {
                       value={telefonoRegistro}
                       onChange={(event) => setTelefonoRegistro(event.target.value)}
                       placeholder="Número de teléfono"
+                      className="input-modern"
+                    />
+                    <input
+                      id="contraseñaRegistro"
+                      name="contraseñaRegistro"
+                      type="password"
+                      autoComplete="new-password"
+                      value={contraseñaRegistro}
+                      onChange={(event) => setContraseñaRegistro(event.target.value)}
+                      placeholder={`Contraseña (mín. ${MIN_CLIENT_PASSWORD_LENGTH} caracteres)`}
                       className="input-modern"
                     />
                     <button type="submit" disabled={registroLoading} className="secondary-btn">
@@ -1586,6 +1662,34 @@ const App = () => {
                   </div>
                   <span className="phone-badge">{cliente.telefono}</span>
                 </div>
+
+                <form className="assign-points-card" onSubmit={handleSetClientPassword}>
+                  <div>
+                    <p className="eyebrow">Acceso del cliente</p>
+                    <h3>Contraseña de consulta</h3>
+                    <p className="card-description">
+                      {cliente.contraseña
+                        ? 'Este cliente ya tiene contraseña. Puedes actualizarla aquí.'
+                        : 'Este cliente aún no tiene contraseña. Asígnale una para que pueda ingresar en la vista pública.'}
+                    </p>
+                  </div>
+                  <input
+                    id="contraseña-cliente-admin"
+                    type="password"
+                    autoComplete="new-password"
+                    value={contraseñaClienteAdmin}
+                    onChange={(event) => setContraseñaClienteAdmin(event.target.value)}
+                    placeholder={`Nueva contraseña (mín. ${MIN_CLIENT_PASSWORD_LENGTH})`}
+                    className="input-modern"
+                  />
+                  <button
+                    type="submit"
+                    disabled={updatingPoints || !contraseñaClienteAdmin.trim()}
+                    className="secondary-btn"
+                  >
+                    {updatingPoints ? 'Guardando...' : 'Guardar contraseña'}
+                  </button>
+                </form>
 
                 <div className="assign-points-card">
                   <div>
