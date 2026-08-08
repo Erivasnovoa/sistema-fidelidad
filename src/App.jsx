@@ -32,13 +32,13 @@ const initialClientLevels = [
   { id: 'bronce', nombre: 'Bronce', puntosMinimos: 0 },
   { id: 'plata', nombre: 'Plata', puntosMinimos: 500 },
   { id: 'oro', nombre: 'Oro', puntosMinimos: 1500 },
-  { id: 'platino', nombre: 'Platino', puntosMinimos: 2500 },
 ]
 
-const obtenerNivelCliente = (puntos) => {
-  if (puntos >= 500) return '👑 VIP / Oro'
-  if (puntos >= 200) return '🥈 Plata'
-  return '🥉 Bronce'
+const obtenerNivelCliente = (puntos, levels = initialClientLevels) => {
+  const sortedLevels = [...levels].sort((a, b) => b.puntosMinimos - a.puntosMinimos)
+  const nivelActual = sortedLevels.find((level) => puntos >= level.puntosMinimos)
+
+  return nivelActual?.nombre ?? 'Sin nivel'
 }
 
 const App = () => {
@@ -75,12 +75,9 @@ const App = () => {
   const [ruleThreshold, setRuleThreshold] = useState('')
   const [rulePointsCost, setRulePointsCost] = useState('')
   const [editingRuleId, setEditingRuleId] = useState(null)
-  const [isOpenConfigModal, setIsOpenConfigModal] = useState(false)
+  const [showConfigModal, setShowConfigModal] = useState(false)
   const [configModalTab, setConfigModalTab] = useState('premios')
   const [clientLevels, setClientLevels] = useState(initialClientLevels)
-  const [levelName, setLevelName] = useState('')
-  const [levelMinPoints, setLevelMinPoints] = useState('')
-  const [editingLevelId, setEditingLevelId] = useState(null)
   const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const handleSearch = async (event) => {
@@ -247,72 +244,14 @@ const App = () => {
     setError('')
   }
 
-  const resetLevelForm = () => {
-    setEditingLevelId(null)
-    setLevelName('')
-    setLevelMinPoints('')
-  }
+  const handleUpdateClientLevel = (levelId, puntosMinimos) => {
+    const nextPoints = Number(puntosMinimos)
 
-  const handleAddClientLevel = (event) => {
-    event.preventDefault()
-
-    const name = levelName.trim()
-    const minPoints = Number(levelMinPoints)
-
-    if (!name || Number.isNaN(minPoints) || minPoints < 0) {
-      setError('Completa el nombre del nivel y los puntos mínimos con valores válidos.')
-      setSuccessMessage('')
-      return
-    }
-
-    const duplicatePoints = clientLevels.some(
-      (level) => level.puntosMinimos === minPoints && level.id !== editingLevelId,
-    )
-
-    if (duplicatePoints) {
-      setError('Ya existe un nivel con esos puntos mínimos.')
-      setSuccessMessage('')
-      return
-    }
-
-    if (editingLevelId) {
-      setClientLevels((currentLevels) => currentLevels.map((level) => (
-        level.id === editingLevelId
-          ? { ...level, nombre: name, puntosMinimos: minPoints }
-          : level
-      )))
-      setSuccessMessage('¡Nivel de cliente actualizado correctamente!')
-    } else {
-      setClientLevels((currentLevels) => [
-        ...currentLevels,
-        {
-          id: crypto.randomUUID(),
-          nombre: name,
-          puntosMinimos: minPoints,
-        },
-      ])
-      setSuccessMessage('¡Nivel de cliente agregado correctamente!')
-    }
-
-    resetLevelForm()
-    setError('')
-  }
-
-  const handleEditLevel = (level) => {
-    setEditingLevelId(level.id)
-    setLevelName(level.nombre)
-    setLevelMinPoints(String(level.puntosMinimos))
-    setError('')
-    setSuccessMessage('')
-  }
-
-  const handleDeleteLevel = (levelId) => {
-    setClientLevels((currentLevels) => currentLevels.filter((level) => level.id !== levelId))
-    if (editingLevelId === levelId) {
-      resetLevelForm()
-    }
-    setSuccessMessage('¡Nivel de cliente eliminado correctamente!')
-    setError('')
+    setClientLevels((currentLevels) => currentLevels.map((level) => (
+      level.id === levelId
+        ? { ...level, puntosMinimos: Number.isNaN(nextPoints) || nextPoints < 0 ? 0 : nextPoints }
+        : level
+    )))
   }
 
   const handleRegisterClient = async (event) => {
@@ -418,6 +357,7 @@ const App = () => {
 
   const puntosDisponibles = cliente ? (cliente.puntos ?? 0) : 0
   const premiosCanjeados = cliente ? (cliente.premiosCanjeados ?? 0) : 0
+  const nivelCliente = cliente ? obtenerNivelCliente(puntosDisponibles, clientLevels) : 'Sin nivel'
   const availablePrizeRules = getAvailablePrizeRules(prizeRules, purchaseAmount)
   const initials = cliente?.nombre?.charAt(0)?.toUpperCase() ?? 'C'
 
@@ -510,7 +450,7 @@ const App = () => {
                 type="button"
                 className="floating-config-btn"
                 onClick={() => {
-                  setIsOpenConfigModal(true)
+                  setShowConfigModal(true)
                   setConfigModalTab('premios')
                   setError('')
                   setSuccessMessage('')
@@ -531,15 +471,15 @@ const App = () => {
               </button>
             </div>
 
-            {isOpenConfigModal ? (
-              <div className="modal-overlay" onClick={() => setIsOpenConfigModal(false)}>
+            {showConfigModal ? (
+              <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
                 <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
                   <div className="card-title-row">
                     <div>
                       <p className="eyebrow">Ajustes</p>
                       <h3>Configuración General</h3>
                     </div>
-                    <button type="button" className="close-modal-btn" onClick={() => setIsOpenConfigModal(false)}>
+                    <button type="button" className="close-modal-btn" onClick={() => setShowConfigModal(false)}>
                       ✕
                     </button>
                   </div>
@@ -669,64 +609,24 @@ const App = () => {
                   ) : (
                     <div className="config-tab-panel">
                       <p className="card-description">
-                        Define el nombre de cada nivel y los puntos mínimos requeridos para alcanzarlo.
+                        Configura los puntos requeridos para cada nivel de cliente: Bronce, Plata y Oro.
                       </p>
 
-                      <form className="stacked-form" onSubmit={handleAddClientLevel}>
-                        <input
-                          type="text"
-                          value={levelName}
-                          onChange={(event) => setLevelName(event.target.value)}
-                          placeholder="Nombre del nivel"
-                          className="input-modern"
-                        />
-                        <input
-                          type="number"
-                          min="0"
-                          value={levelMinPoints}
-                          onChange={(event) => setLevelMinPoints(event.target.value)}
-                          placeholder="Puntos mínimos requeridos"
-                          className="input-modern"
-                        />
-                        <button type="submit" className="secondary-btn">
-                          {editingLevelId ? 'Guardar cambios' : 'Agregar nivel'}
-                        </button>
-                        {editingLevelId ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              resetLevelForm()
-                              setError('')
-                              setSuccessMessage('')
-                            }}
-                            className="ghost-btn"
-                          >
-                            Cancelar
-                          </button>
-                        ) : null}
-                      </form>
-
-                      <div className="rules-list">
-                        {[...clientLevels]
-                          .sort((a, b) => a.puntosMinimos - b.puntosMinimos)
-                          .map((level) => (
-                            <div key={level.id} className="rule-item">
-                              <div>
-                                <p className="rule-name">{level.nombre}</p>
-                                <p className="rule-meta">
-                                  Puntos mínimos: {level.puntosMinimos.toLocaleString('es-CR')} pts
-                                </p>
-                              </div>
-                              <div className="rule-actions">
-                                <button type="button" className="mini-btn" onClick={() => handleEditLevel(level)}>
-                                  Editar
-                                </button>
-                                <button type="button" className="mini-btn danger" onClick={() => handleDeleteLevel(level.id)}>
-                                  Eliminar
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+                      <div className="stacked-form">
+                        {clientLevels.map((level) => (
+                          <label key={level.id} className="field-label" htmlFor={`nivel-${level.id}`}>
+                            {level.nombre}
+                            <input
+                              id={`nivel-${level.id}`}
+                              type="number"
+                              min="0"
+                              value={level.puntosMinimos}
+                              onChange={(event) => handleUpdateClientLevel(level.id, event.target.value)}
+                              placeholder={`Puntos requeridos para ${level.nombre}`}
+                              className="input-modern mt-2"
+                            />
+                          </label>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -814,28 +714,28 @@ const App = () => {
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <div className="rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-orange-50 p-4 shadow-sm">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-amber-700/80">
                       Puntos Disponibles
                     </p>
                     <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
                       {puntosDisponibles.toLocaleString('es-CR')}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <div className="rounded-2xl border border-sky-200/80 bg-gradient-to-br from-sky-50 via-white to-cyan-50 p-4 shadow-sm">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-sky-700/80">
                       Premios Canjeados
                     </p>
                     <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
                       {premiosCanjeados}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <div className="rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-4 shadow-sm">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-emerald-700/80">
                       Nivel de Cliente
                     </p>
-                    <p className="mt-2 text-2xl font-bold tracking-tight text-amber-700">
-                      {obtenerNivelCliente(puntosDisponibles)}
+                    <p className="mt-2 text-2xl font-bold tracking-tight text-emerald-800">
+                      {nivelCliente}
                     </p>
                   </div>
                 </div>
