@@ -63,6 +63,7 @@ const App = () => {
   const [rulePointsCost, setRulePointsCost] = useState('')
   const [editingRuleId, setEditingRuleId] = useState(null)
   const [showPrizeConfig, setShowPrizeConfig] = useState(false)
+  const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const handleSearch = async (event) => {
     event.preventDefault()
@@ -257,6 +258,7 @@ const App = () => {
 
       setNombre('')
       setTelefonoRegistro('')
+      setShowRegisterModal(false)
       setSuccessMessage('¡Cliente registrado con éxito!')
     } catch (err) {
       setError('No se pudo registrar al cliente. Intenta nuevamente.')
@@ -411,9 +413,22 @@ const App = () => {
               {successMessage ? <div className="feedback-card feedback-success">{successMessage}</div> : null}
             </div>
 
-            <button type="button" className="floating-config-btn" onClick={() => setShowPrizeConfig(true)}>
-              ⚙️ Configuración de premios
-            </button>
+            <div className="action-row">
+              <button type="button" className="floating-config-btn" onClick={() => setShowPrizeConfig(true)}>
+                ⚙️ Configuración de premios
+              </button>
+              <button
+                type="button"
+                className="floating-config-btn register-action-btn"
+                onClick={() => {
+                  setShowRegisterModal(true)
+                  setError('')
+                  setSuccessMessage('')
+                }}
+              >
+                ➕ Registrar cliente
+              </button>
+            </div>
 
             {showPrizeConfig ? (
               <div className="modal-overlay" onClick={() => setShowPrizeConfig(false)}>
@@ -530,7 +545,7 @@ const App = () => {
             ) : null}
 
             {!cliente ? (
-              <div className="secondary-card">
+              <div className="secondary-card compact-card">
                 <div className="card-title-row">
                   <div>
                     <p className="eyebrow">Nuevo ingreso</p>
@@ -541,30 +556,60 @@ const App = () => {
                 <p className="card-description">
                   Crea el perfil del cliente y empieza su recorrido de puntos desde cero.
                 </p>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => {
+                    setShowRegisterModal(true)
+                    setError('')
+                    setSuccessMessage('')
+                  }}
+                >
+                  Abrir formulario de registro
+                </button>
+              </div>
+            ) : null}
 
-                <form className="stacked-form" onSubmit={handleRegisterClient}>
-                  <input
-                    id="nombre"
-                    name="nombre"
-                    type="text"
-                    value={nombre}
-                    onChange={(event) => setNombre(event.target.value)}
-                    placeholder="Nombre del cliente"
-                    className="input-modern"
-                  />
-                  <input
-                    id="telefonoRegistro"
-                    name="telefonoRegistro"
-                    type="tel"
-                    value={telefonoRegistro}
-                    onChange={(event) => setTelefonoRegistro(event.target.value)}
-                    placeholder="Número de teléfono"
-                    className="input-modern"
-                  />
-                  <button type="submit" disabled={registroLoading} className="secondary-btn">
-                    {registroLoading ? 'Registrando...' : 'Registrar cliente'}
-                  </button>
-                </form>
+            {showRegisterModal ? (
+              <div className="modal-overlay" onClick={() => setShowRegisterModal(false)}>
+                <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
+                  <div className="card-title-row">
+                    <div>
+                      <p className="eyebrow">Nuevo ingreso</p>
+                      <h3>Registrar cliente</h3>
+                    </div>
+                    <button type="button" className="close-modal-btn" onClick={() => setShowRegisterModal(false)}>
+                      ✕
+                    </button>
+                  </div>
+                  <p className="card-description">
+                    Completa los datos del cliente para crear su perfil y comenzar su recorrido de puntos.
+                  </p>
+
+                  <form className="stacked-form" onSubmit={handleRegisterClient}>
+                    <input
+                      id="nombre"
+                      name="nombre"
+                      type="text"
+                      value={nombre}
+                      onChange={(event) => setNombre(event.target.value)}
+                      placeholder="Nombre del cliente"
+                      className="input-modern"
+                    />
+                    <input
+                      id="telefonoRegistro"
+                      name="telefonoRegistro"
+                      type="tel"
+                      value={telefonoRegistro}
+                      onChange={(event) => setTelefonoRegistro(event.target.value)}
+                      placeholder="Número de teléfono"
+                      className="input-modern"
+                    />
+                    <button type="submit" disabled={registroLoading} className="secondary-btn">
+                      {registroLoading ? 'Registrando...' : 'Registrar cliente'}
+                    </button>
+                  </form>
+                </div>
               </div>
             ) : null}
 

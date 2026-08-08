@@ -342,6 +342,12 @@
   background: #f8fafc;
 }
 
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .floating-config-btn {
   align-self: flex-start;
   border: none;
@@ -352,6 +358,16 @@
   background: linear-gradient(135deg, #7c3aed, #ec4899);
   cursor: pointer;
   box-shadow: 0 12px 24px rgba(124, 58, 237, 0.2);
+}
+
+.register-action-btn {
+  background: linear-gradient(135deg, #0f766e, #14b8a6);
+}
+
+.compact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .modal-overlay {
