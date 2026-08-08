@@ -349,7 +349,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
             '--brand-rule': 'rgba(196, 138, 26, 0.5)',
           }}
         >
-          <div className="mb-4 flex items-center justify-between gap-2">
+          <div className="mb-5 flex items-center justify-between gap-2">
             <button
               type="button"
               onClick={() => abrirRegistro()}
@@ -365,17 +365,21 @@ const ClientePublico = ({ onAccesoAdmin }) => {
               Acceso Admin
             </button>
           </div>
-          <h1
-            className="text-[2.75rem] leading-none tracking-[0.14em] sm:text-6xl"
-            style={{
-              fontFamily: '"Bebas Neue", sans-serif',
-              color: 'var(--brand-title)',
-            }}
-          >
-            EL BAJONAZO
-          </h1>
+
+          <div className="mx-auto flex w-full max-w-[280px] flex-col items-center sm:max-w-[320px]">
+            <img
+              src="/vb-smoke-grill-logo.png"
+              alt="VB Smoke & Grill"
+              className="h-auto w-full select-none drop-shadow-[0_12px_28px_rgba(220,38,38,0.28)] animate-[brandIn_0.55s_ease-out]"
+              width={640}
+              height={640}
+              decoding="async"
+            />
+            <h1 className="sr-only">VB Smoke & Grill</h1>
+          </div>
+
           <div
-            className="mx-auto mt-3 h-px w-16"
+            className="mx-auto mt-2 h-px w-16"
             style={{ background: 'var(--brand-rule)' }}
             aria-hidden="true"
           />
@@ -731,6 +735,10 @@ const ClientePublico = ({ onAccesoAdmin }) => {
         @keyframes fadeUp {
           from { opacity: 0; transform: translateY(12px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes brandIn {
+          from { opacity: 0; transform: scale(0.92) translateY(10px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
     </main>
