@@ -195,6 +195,11 @@ const App = () => {
     }
   })
   const [showRegisterModal, setShowRegisterModal] = useState(false)
+  const [showEditClientModal, setShowEditClientModal] = useState(false)
+  const [editNombre, setEditNombre] = useState('')
+  const [editTelefono, setEditTelefono] = useState('')
+  const [editContraseña, setEditContraseña] = useState('')
+  const [editClientLoading, setEditClientLoading] = useState(false)
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [showAuthModal, setShowAuthModal] = useState(false)
@@ -216,6 +221,7 @@ const App = () => {
         setVistaActual('cliente')
         setShowConfigModal(false)
         setShowRegisterModal(false)
+        setShowEditClientModal(false)
         setSolicitudesPendientes([])
       }
     })
@@ -292,11 +298,30 @@ const App = () => {
       setShowAuthModal(false)
       setShowConfigModal(false)
       setShowRegisterModal(false)
+      setShowEditClientModal(false)
       setVistaActual('cliente')
     } catch (err) {
       console.error(err)
       setError('No se pudo cerrar la sesión. Intenta nuevamente.')
     }
+  }
+
+  const cerrarEditClientModal = () => {
+    setShowEditClientModal(false)
+    setEditNombre('')
+    setEditTelefono('')
+    setEditContraseña('')
+    setEditClientLoading(false)
+  }
+
+  const abrirEditClientModal = () => {
+    if (!cliente) return
+    setEditNombre(cliente.nombre || '')
+    setEditTelefono(cliente.telefono || '')
+    setEditContraseña('')
+    setError('')
+    setSuccessMessage('')
+    setShowEditClientModal(true)
   }
 
   const handleSearch = async (event) => {
@@ -316,6 +341,10 @@ const App = () => {
     setCliente(null)
     setMontoCompraAsignacion('')
     setContraseñaClienteAdmin('')
+    setShowEditClientModal(false)
+    setEditNombre('')
+    setEditTelefono('')
+    setEditContraseña('')
 
     try {
       const clientesRef = collection(db, 'clientes')
@@ -806,6 +835,80 @@ const App = () => {
         ? { ...level, puntosMinimos: Number.isNaN(nextPoints) || nextPoints < 0 ? 0 : nextPoints }
         : level
     )))
+  }
+
+  const handleSaveClientEdit = async (event) => {
+    event.preventDefault()
+
+    if (!cliente?.id) return
+
+    const nombreTrim = editNombre.trim()
+    const telefonoTrim = editTelefono.trim()
+    const passwordRaw = editContraseña.trim()
+
+    if (!nombreTrim || !telefonoTrim) {
+      setError('Completa nombre y teléfono para guardar los cambios.')
+      setSuccessMessage('')
+      return
+    }
+
+    let passwordCheck = null
+    if (passwordRaw) {
+      passwordCheck = validateClientPassword(passwordRaw)
+      if (!passwordCheck.ok) {
+        setError(passwordCheck.error)
+        setSuccessMessage('')
+        return
+      }
+    }
+
+    setEditClientLoading(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      if (telefonoTrim !== (cliente.telefono || '')) {
+        const telefonoQuery = query(
+          collection(db, 'clientes'),
+          where('telefono', '==', telefonoTrim),
+        )
+        const telefonoSnap = await getDocs(telefonoQuery)
+        const telefonoTomado = telefonoSnap.docs.some((clienteDoc) => clienteDoc.id !== cliente.id)
+
+        if (telefonoTomado) {
+          setError('Ese número de teléfono ya pertenece a otro cliente.')
+          return
+        }
+      }
+
+      const updates = {
+        nombre: nombreTrim,
+        telefono: telefonoTrim,
+      }
+
+      if (passwordCheck) {
+        updates.contraseña = await hashClientPassword(passwordCheck.password)
+      }
+
+      await updateDoc(doc(db, 'clientes', cliente.id), updates)
+
+      setCliente((current) => (
+        current
+          ? {
+              ...current,
+              ...updates,
+            }
+          : current
+      ))
+      setTelefono(telefonoTrim)
+      cerrarEditClientModal()
+      setSuccessMessage(`Datos de "${nombreTrim}" actualizados correctamente.`)
+    } catch (err) {
+      setError('No se pudieron guardar los cambios del cliente.')
+      console.error(err)
+    } finally {
+      setEditClientLoading(false)
+    }
   }
 
   const handleSetClientPassword = async (event) => {
@@ -1525,6 +1628,98 @@ const App = () => {
               </div>
             ) : null}
 
+            {user && showEditClientModal && cliente ? (
+              <div
+                className="modal-overlay"
+                onClick={() => {
+                  if (!editClientLoading) cerrarEditClientModal()
+                }}
+              >
+                <div className="config-card modal-card" onClick={(event) => event.stopPropagation()}>
+                  <div className="card-title-row">
+                    <div>
+                      <p className="eyebrow">Actualizar perfil</p>
+                      <h3>Editar cliente</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="close-modal-btn"
+                      disabled={editClientLoading}
+                      onClick={cerrarEditClientModal}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="card-description">
+                    Modifica nombre, teléfono o contraseña del cliente y guarda los cambios.
+                  </p>
+
+                  <form className="stacked-form" onSubmit={handleSaveClientEdit}>
+                    <label htmlFor="edit-nombre" className="field-label">
+                      Nombre
+                    </label>
+                    <input
+                      id="edit-nombre"
+                      name="edit-nombre"
+                      type="text"
+                      value={editNombre}
+                      onChange={(event) => setEditNombre(event.target.value)}
+                      placeholder="Nombre del cliente"
+                      className="input-modern"
+                      disabled={editClientLoading}
+                    />
+
+                    <label htmlFor="edit-telefono" className="field-label">
+                      Teléfono
+                    </label>
+                    <input
+                      id="edit-telefono"
+                      name="edit-telefono"
+                      type="tel"
+                      value={editTelefono}
+                      onChange={(event) => setEditTelefono(event.target.value)}
+                      placeholder="Número de teléfono"
+                      className="input-modern"
+                      disabled={editClientLoading}
+                    />
+
+                    <label htmlFor="edit-contraseña" className="field-label">
+                      Contraseña (opcional)
+                    </label>
+                    <input
+                      id="edit-contraseña"
+                      name="edit-contraseña"
+                      type="password"
+                      autoComplete="new-password"
+                      value={editContraseña}
+                      onChange={(event) => setEditContraseña(event.target.value)}
+                      placeholder={`Dejar vacío para no cambiar · mín. ${MIN_CLIENT_PASSWORD_LENGTH}`}
+                      className="input-modern"
+                      disabled={editClientLoading}
+                    />
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="submit"
+                        disabled={editClientLoading}
+                        className="primary-btn"
+                      >
+                        {editClientLoading ? 'Guardando...' : 'Guardar cambios'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={editClientLoading}
+                        className="secondary-btn"
+                        onClick={cerrarEditClientModal}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            ) : null}
+
             {user && showRegisterModal ? (
               <div
                 className="modal-overlay"
@@ -1609,22 +1804,32 @@ const App = () => {
                       </span>
                     </div>
                     <h3>{cliente.nombre}</h3>
-                    <button
-                      type="button"
-                      onClick={handleToggleClienteEstado}
-                      disabled={updatingPoints}
-                      className={`mt-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${
-                        clienteEstaInactivo
-                          ? 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60'
-                          : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-60'
-                      }`}
-                    >
-                      {updatingPoints
-                        ? 'Actualizando...'
-                        : clienteEstaInactivo
-                          ? 'Activar Cliente'
-                          : 'Desactivar Cliente'}
-                    </button>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={abrirEditClientModal}
+                        disabled={updatingPoints || editClientLoading}
+                        className="rounded-xl bg-sky-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
+                      >
+                        Editar cliente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleToggleClienteEstado}
+                        disabled={updatingPoints}
+                        className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                          clienteEstaInactivo
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60'
+                            : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-60'
+                        }`}
+                      >
+                        {updatingPoints
+                          ? 'Actualizando...'
+                          : clienteEstaInactivo
+                            ? 'Activar Cliente'
+                            : 'Desactivar Cliente'}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
