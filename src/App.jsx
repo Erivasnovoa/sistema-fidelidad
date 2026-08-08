@@ -24,6 +24,8 @@ import {
   normalizePrizeRules,
   parseMontoCompra,
   resolveClientPrizes,
+  normalizeClientPremios,
+  ORIGEN_PREMIO_CATALOGO,
   SOLICITUD_APROBADA,
   SOLICITUD_PENDIENTE,
   SOLICITUD_RECHAZADA,
@@ -567,7 +569,7 @@ const App = () => {
         fechaAsignacion: new Date().toISOString(),
         status: STATUS_PENDIENTE,
       }
-      const nextPremios = [...(cliente.premios ?? []), premioAsignado]
+      const nextPremios = [...normalizeClientPremios(cliente.premios), premioAsignado]
 
       await updateDoc(clienteDocRef, {
         puntos: nextPoints,
@@ -601,7 +603,7 @@ const App = () => {
 
     try {
       const clienteDocRef = doc(db, 'clientes', cliente.id)
-      const nextPremios = (cliente.premios ?? []).map((premio) => (
+      const nextPremios = normalizeClientPremios(cliente.premios).map((premio) => (
         premio.id === premioAsignado.id
           ? { ...premio, status: STATUS_CANJEADO, fechaCanje: new Date().toISOString() }
           : premio
@@ -620,6 +622,58 @@ const App = () => {
       setSuccessMessage(`Premio "${premioAsignado.nombre}" canjeado correctamente.`)
     } catch (err) {
       setError('No se pudo canjear el premio. Intenta nuevamente.')
+      console.error(err)
+    } finally {
+      setUpdatingPoints(false)
+    }
+  }
+
+  const handleCancelAssignedPrize = async (premioAsignado) => {
+    if (!cliente?.id || !premioAsignado?.id) return
+
+    const status = resolveClientPrizes([premioAsignado])[0]?.statusEfectivo
+    if (status !== STATUS_PENDIENTE && status !== STATUS_EN_SOLICITUD) {
+      setError('Solo se pueden cancelar premios pendientes o en solicitud.')
+      return
+    }
+
+    setUpdatingPoints(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const clienteDocRef = doc(db, 'clientes', cliente.id)
+      const puntosDevolver = Number(premioAsignado.puntosCosto) || 0
+      const nextPoints = (cliente.puntos ?? 0) + puntosDevolver
+      const nextPremios = normalizeClientPremios(cliente.premios).filter(
+        (premio) => premio.id !== premioAsignado.id,
+      )
+      const batch = writeBatch(db)
+
+      batch.update(clienteDocRef, {
+        puntos: nextPoints,
+        premios: nextPremios,
+      })
+
+      if (premioAsignado.solicitudCanjeId) {
+        batch.update(doc(db, 'solicitudesCanje', premioAsignado.solicitudCanjeId), {
+          status: SOLICITUD_RECHAZADA,
+          resueltoAt: new Date().toISOString(),
+        })
+      }
+
+      await batch.commit()
+
+      setCliente((currentCliente) => (
+        currentCliente
+          ? { ...currentCliente, puntos: nextPoints, premios: nextPremios }
+          : currentCliente
+      ))
+      setSuccessMessage(
+        `Premio "${premioAsignado.nombre}" cancelado. Se devolvieron ${puntosDevolver} pts.`,
+      )
+    } catch (err) {
+      setError('No se pudo cancelar el premio. Intenta nuevamente.')
       console.error(err)
     } finally {
       setUpdatingPoints(false)
@@ -654,23 +708,64 @@ const App = () => {
       }
 
       const clienteData = clienteSnap.data()
-      const nextPremios = (clienteData.premios ?? []).map((premio) => (
-        premio.id === solicitud.premioId
-          ? {
-              ...premio,
-              status: STATUS_CANJEADO,
-              fechaCanje: new Date().toISOString(),
-              solicitudCanjeId: solicitud.id,
-            }
-          : premio
-      ))
+      const premiosActuales = normalizeClientPremios(clienteData.premios)
+      const esCatalogo = solicitud.origen === ORIGEN_PREMIO_CATALOGO
+      const premioAsignadoIdx = premiosActuales.findIndex(
+        (premio) => premio.id === solicitud.premioId,
+      )
+      const puntosActuales = clienteData.puntos ?? 0
+      const puntosCosto = Number(solicitud.puntosCosto) || 0
+      let nextPremios = premiosActuales
+      let nextPoints = puntosActuales
       const nextRedeemed = (clienteData.premiosCanjeados ?? 0) + 1
       const batch = writeBatch(db)
 
-      batch.update(clienteDocRef, {
-        premios: nextPremios,
-        premiosCanjeados: nextRedeemed,
-      })
+      if (esCatalogo || premioAsignadoIdx < 0) {
+        if (puntosCosto > 0 && puntosActuales < puntosCosto) {
+          setError('El cliente no tiene puntos suficientes para aprobar este canje.')
+          return
+        }
+
+        nextPoints = Math.max(0, puntosActuales - puntosCosto)
+        nextPremios = [
+          ...premiosActuales,
+          {
+            id: crypto.randomUUID(),
+            premioId: solicitud.premioCatalogoId || solicitud.premioId,
+            nombre: solicitud.premioNombre,
+            descripcion: solicitud.premioDescripcion || '',
+            puntosCosto,
+            nivelId: solicitud.nivelId || 'bronce',
+            fechaAsignacion: new Date().toISOString(),
+            fechaCanje: new Date().toISOString(),
+            status: STATUS_CANJEADO,
+            solicitudCanjeId: solicitud.id,
+          },
+        ]
+
+        batch.update(clienteDocRef, {
+          puntos: nextPoints,
+          premios: nextPremios,
+          premiosCanjeados: nextRedeemed,
+        })
+      } else {
+        nextPremios = premiosActuales.map((premio) => (
+          premio.id === solicitud.premioId
+            ? {
+                ...premio,
+                status: STATUS_CANJEADO,
+                fechaCanje: new Date().toISOString(),
+                solicitudCanjeId: solicitud.id,
+              }
+            : premio
+        ))
+
+        batch.update(clienteDocRef, {
+          premios: nextPremios,
+          premiosCanjeados: nextRedeemed,
+        })
+      }
+
       batch.update(doc(db, 'solicitudesCanje', solicitud.id), {
         status: SOLICITUD_APROBADA,
         resueltoAt: new Date().toISOString(),
@@ -678,6 +773,7 @@ const App = () => {
       await batch.commit()
 
       sincronizarClienteLocal(solicitud.clienteId, {
+        puntos: nextPoints,
         premios: nextPremios,
         premiosCanjeados: nextRedeemed,
       })
@@ -705,9 +801,9 @@ const App = () => {
       const batch = writeBatch(db)
       let nextPremios = null
 
-      if (clienteSnap.exists()) {
+      if (clienteSnap.exists() && solicitud.origen !== ORIGEN_PREMIO_CATALOGO) {
         const clienteData = clienteSnap.data()
-        nextPremios = (clienteData.premios ?? []).map((premio) => (
+        nextPremios = normalizeClientPremios(clienteData.premios).map((premio) => (
           premio.id === solicitud.premioId && premio.status === STATUS_EN_SOLICITUD
             ? {
                 ...premio,
@@ -2073,33 +2169,51 @@ const App = () => {
                               </p>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => handleRedeemAssignedPrize(premio)}
-                              disabled={updatingPoints || !esCanjeable}
-                              className={`shrink-0 rounded-xl px-3 py-2 text-sm font-semibold transition ${
-                                esCanjeable
-                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                                  : 'cursor-not-allowed bg-slate-100 text-slate-400'
-                              }`}
-                              title={
-                                status === STATUS_VENCIDO
-                                  ? 'Premio vencido: no se puede canjear'
-                                  : status === STATUS_CANJEADO
-                                    ? 'Premio ya canjeado'
+                            <div className="flex shrink-0 flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRedeemAssignedPrize(premio)}
+                                disabled={updatingPoints || !esCanjeable}
+                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                                  esCanjeable
+                                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                    : 'cursor-not-allowed bg-slate-100 text-slate-400'
+                                }`}
+                                title={
+                                  status === STATUS_VENCIDO
+                                    ? 'Premio vencido: no se puede canjear'
+                                    : status === STATUS_CANJEADO
+                                      ? 'Premio ya canjeado'
+                                      : status === STATUS_EN_SOLICITUD
+                                        ? 'Esperando aprobación de solicitud'
+                                        : 'Canjear premio'
+                                }
+                              >
+                                {status === STATUS_CANJEADO
+                                  ? 'Canjeado'
+                                  : status === STATUS_VENCIDO
+                                    ? 'Vencido'
                                     : status === STATUS_EN_SOLICITUD
-                                      ? 'Esperando aprobación de solicitud'
-                                      : 'Canjear premio'
-                              }
-                            >
-                              {status === STATUS_CANJEADO
-                                ? 'Canjeado'
-                                : status === STATUS_VENCIDO
-                                  ? 'Vencido'
-                                  : status === STATUS_EN_SOLICITUD
-                                    ? 'En solicitud'
-                                    : 'Canjear'}
-                            </button>
+                                      ? 'En solicitud'
+                                      : 'Canjear'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCancelAssignedPrize(premio)}
+                                disabled={
+                                  updatingPoints
+                                  || (status !== STATUS_PENDIENTE && status !== STATUS_EN_SOLICITUD)
+                                }
+                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                                  status === STATUS_PENDIENTE || status === STATUS_EN_SOLICITUD
+                                    ? 'bg-rose-600 text-white hover:bg-rose-700'
+                                    : 'cursor-not-allowed bg-slate-100 text-slate-400'
+                                }`}
+                                title="Cancelar premio y devolver puntos"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
                           </div>
                         )
                       })

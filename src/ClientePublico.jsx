@@ -3,15 +3,20 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
-  updateDoc,
   where,
   writeBatch,
 } from 'firebase/firestore'
 import { db } from './lib/firebase'
-import { DEFAULT_CLIENT_LEVELS, obtenerNivelCliente } from './lib/clientLevels'
+import {
+  clienteAlcanzaNivel,
+  DEFAULT_CLIENT_LEVELS,
+  normalizeClientLevels,
+  obtenerNivelCliente,
+} from './lib/clientLevels'
 import {
   hashClientPassword,
   MIN_CLIENT_PASSWORD_LENGTH,
@@ -21,6 +26,9 @@ import {
 } from './lib/clientPassword'
 import {
   getDaysSinceAssignment,
+  normalizePrizeRules,
+  ORIGEN_PREMIO_ASIGNADO,
+  ORIGEN_PREMIO_CATALOGO,
   PRIZE_EXPIRATION_DAYS,
   resolveClientPrizes,
   SOLICITUD_PENDIENTE,
@@ -52,6 +60,28 @@ const ClientePublico = ({ onAccesoAdmin }) => {
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [busquedaHecha, setBusquedaHecha] = useState(false)
+  const [prizeRules, setPrizeRules] = useState([])
+  const [clientLevels, setClientLevels] = useState(DEFAULT_CLIENT_LEVELS)
+  const [solicitudesPendientesCliente, setSolicitudesPendientesCliente] = useState([])
+
+  useEffect(() => {
+    const loadPrizeConfig = async () => {
+      try {
+        const rulesDoc = await getDoc(doc(db, 'configuracionPremios', 'reglas'))
+        if (!rulesDoc.exists()) return
+
+        const data = rulesDoc.data()
+        setPrizeRules(normalizePrizeRules(data.reglas || []))
+        if (data.niveles) {
+          setClientLevels(normalizeClientLevels(data.niveles))
+        }
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    loadPrizeConfig()
+  }, [])
 
   useEffect(() => {
     if (!cliente?.id || !busquedaHecha) return undefined
@@ -72,6 +102,38 @@ const ClientePublico = ({ onAccesoAdmin }) => {
   }, [cliente?.id, busquedaHecha])
 
   useEffect(() => {
+    if (!cliente?.id || !busquedaHecha) {
+      setSolicitudesPendientesCliente([])
+      return undefined
+    }
+
+    const solicitudesQuery = query(
+      collection(db, 'solicitudesCanje'),
+      where('clienteId', '==', cliente.id),
+    )
+
+    const unsubscribe = onSnapshot(
+      solicitudesQuery,
+      (snapshot) => {
+        setSolicitudesPendientesCliente(
+          snapshot.docs
+            .map((solicitudDoc) => ({
+              id: solicitudDoc.id,
+              ...solicitudDoc.data(),
+            }))
+            .filter((solicitud) => solicitud.status === SOLICITUD_PENDIENTE),
+        )
+      },
+      (err) => {
+        console.error(err)
+        setSolicitudesPendientesCliente([])
+      },
+    )
+
+    return unsubscribe
+  }, [cliente?.id, busquedaHecha])
+
+  useEffect(() => {
     if (!cliente) {
       setPremioSeleccionadoId(null)
       return
@@ -82,6 +144,9 @@ const ClientePublico = ({ onAccesoAdmin }) => {
 
     setPremioSeleccionadoId((currentId) => {
       if (currentId && premiosCanjeables.some((premio) => premio.id === currentId)) {
+        return currentId
+      }
+      if (currentId && String(currentId).startsWith('catalogo:')) {
         return currentId
       }
       return premiosCanjeables[0]?.id ?? null
@@ -256,7 +321,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
     }
   }
 
-  const handleSolicitarCanje = async (premio) => {
+  const handleSolicitarCanjeAsignado = async (premio) => {
     if (!cliente?.id || !premio?.id) return
 
     if (premio.statusEfectivo !== STATUS_PENDIENTE) {
@@ -271,7 +336,7 @@ const ClientePublico = ({ onAccesoAdmin }) => {
     try {
       const fecha = new Date().toISOString()
       const solicitudRef = doc(collection(db, 'solicitudesCanje'))
-      const nextPremios = (cliente.premios ?? []).map((item) => (
+      const nextPremios = resolveClientPrizes(cliente.premios).map((item) => (
         item.id === premio.id
           ? {
               ...item,
@@ -287,11 +352,14 @@ const ClientePublico = ({ onAccesoAdmin }) => {
         clienteNombre: cliente.nombre || 'Cliente',
         premioId: premio.id,
         premioNombre: premio.nombre,
+        puntosCosto: premio.puntosCosto ?? 0,
+        nivelId: premio.nivelId || 'bronce',
+        origen: ORIGEN_PREMIO_ASIGNADO,
         fecha,
         status: SOLICITUD_PENDIENTE,
       })
       batch.update(doc(db, 'clientes', cliente.id), {
-        premios: nextPremios,
+        premios: nextPremios.map(({ statusEfectivo: _statusEfectivo, ...rest }) => rest),
       })
       await batch.commit()
 
@@ -308,17 +376,150 @@ const ClientePublico = ({ onAccesoAdmin }) => {
     }
   }
 
+  const handleSolicitarCanjeCatalogo = async (regla) => {
+    if (!cliente?.id || !regla?.id) return
+
+    const puntosActuales = cliente.puntos ?? 0
+    const puntosCosto = Number(regla.puntosCosto) || 0
+
+    if (!clienteAlcanzaNivel(puntosActuales, regla.nivelId, clientLevels)) {
+      setError('Aún no alcanzas el nivel requerido para este premio.')
+      return
+    }
+
+    if (puntosActuales < puntosCosto) {
+      setError('No tienes puntos suficientes para canjear este premio.')
+      return
+    }
+
+    if (solicitudesPendientesCliente.some((item) => (
+      item.origen === ORIGEN_PREMIO_CATALOGO
+      && (item.premioId === regla.id || item.premioCatalogoId === regla.id)
+    ))) {
+      setError('Ya tienes una solicitud pendiente para este premio.')
+      return
+    }
+
+    const nivelOcupado = solicitudesPendientesCliente.some((item) => (
+      item.nivelId === (regla.nivelId || 'bronce')
+      && item.premioId !== regla.id
+      && item.premioCatalogoId !== regla.id
+    )) || resolveClientPrizes(cliente.premios).some((premio) => (
+      premio.nivelId === (regla.nivelId || 'bronce')
+      && (premio.statusEfectivo === STATUS_PENDIENTE || premio.statusEfectivo === STATUS_EN_SOLICITUD)
+      && premio.premioId !== regla.id
+      && premio.id !== regla.id
+    ))
+
+    if (nivelOcupado) {
+      setError('Ya elegiste otro premio de este nivel. Cancélalo o espera la resolución para elegir otro.')
+      return
+    }
+
+    setCanjeLoadingId(`catalogo:${regla.id}`)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const solicitudRef = doc(collection(db, 'solicitudesCanje'))
+      const batch = writeBatch(db)
+      batch.set(solicitudRef, {
+        clienteId: cliente.id,
+        clienteNombre: cliente.nombre || 'Cliente',
+        premioId: regla.id,
+        premioCatalogoId: regla.id,
+        premioNombre: regla.nombre,
+        premioDescripcion: regla.descripcion || '',
+        puntosCosto,
+        nivelId: regla.nivelId || 'bronce',
+        origen: ORIGEN_PREMIO_CATALOGO,
+        fecha: new Date().toISOString(),
+        status: SOLICITUD_PENDIENTE,
+      })
+      await batch.commit()
+
+      setPremioSeleccionadoId(null)
+      setSuccessMessage(`Solicitud enviada para "${regla.nombre}". Espera la aprobación del administrador.`)
+    } catch (err) {
+      setError('No se pudo enviar la solicitud de canje. Intenta de nuevo.')
+      console.error(err)
+    } finally {
+      setCanjeLoadingId(null)
+    }
+  }
+
   const puntosDisponibles = cliente?.puntos ?? 0
   const nivelCliente = cliente
-    ? obtenerNivelCliente(puntosDisponibles, DEFAULT_CLIENT_LEVELS)
+    ? obtenerNivelCliente(puntosDisponibles, clientLevels)
     : 'Sin nivel'
   const premiosCliente = cliente ? resolveClientPrizes(cliente.premios) : []
   const premiosVisibles = premiosCliente.filter(
     (premio) => premio.statusEfectivo !== STATUS_CANJEADO,
   )
-  const premiosCanjeables = premiosVisibles.filter(
-    (premio) => premio.statusEfectivo === STATUS_PENDIENTE,
+  const premiosCatalogoNivel = prizeRules.filter((regla) => (
+    clienteAlcanzaNivel(puntosDisponibles, regla.nivelId, clientLevels)
+  ))
+  const idsPremiosAsignadosActivos = new Set(
+    premiosVisibles
+      .map((premio) => premio.premioId || premio.id)
+      .filter(Boolean),
   )
+
+  // Un solo premio activo por nivel (asignado o solicitud pendiente).
+  const nivelesOcupados = new Map()
+  premiosVisibles.forEach((premio) => {
+    if (
+      (premio.statusEfectivo === STATUS_PENDIENTE
+        || premio.statusEfectivo === STATUS_EN_SOLICITUD)
+      && premio.nivelId
+      && !nivelesOcupados.has(premio.nivelId)
+    ) {
+      nivelesOcupados.set(premio.nivelId, {
+        tipo: 'asignado',
+        id: premio.id,
+        premioId: premio.premioId || premio.id,
+      })
+    }
+  })
+  solicitudesPendientesCliente.forEach((solicitud) => {
+    if (!solicitud.nivelId || nivelesOcupados.has(solicitud.nivelId)) return
+    nivelesOcupados.set(solicitud.nivelId, {
+      tipo: 'solicitud',
+      id: solicitud.premioCatalogoId || solicitud.premioId,
+    })
+  })
+
+  const esPremioBloqueadoPorNivel = (nivelId, propioId, propioPremioId = null) => {
+    if (!nivelId || !nivelesOcupados.has(nivelId)) return false
+    const ocupante = nivelesOcupados.get(nivelId)
+    return ocupante.id !== propioId && ocupante.id !== propioPremioId && ocupante.premioId !== propioId
+  }
+
+  const premioCatalogoSeleccionadoId = premioSeleccionadoId?.startsWith('catalogo:')
+    ? premioSeleccionadoId.slice('catalogo:'.length)
+    : null
+  const nivelCatalogoSeleccionado = premioCatalogoSeleccionadoId
+    ? (prizeRules.find((regla) => regla.id === premioCatalogoSeleccionadoId)?.nivelId || null)
+    : null
+
+  const premiosCatalogoVisibles = premiosCatalogoNivel.filter((regla) => {
+    const yaAsignadoActivo = idsPremiosAsignadosActivos.has(regla.id)
+    if (yaAsignadoActivo) return false
+
+    const ocupante = nivelesOcupados.get(regla.nivelId)
+    if (ocupante) {
+      // Nivel ya tomado por asignación/solicitud: solo el premio elegido queda visible.
+      return ocupante.id === regla.id || ocupante.premioId === regla.id
+    }
+
+    // Al seleccionar un premio del nivel, los demás se ocultan hasta cambiar la elección.
+    if (nivelCatalogoSeleccionado && regla.nivelId === nivelCatalogoSeleccionado) {
+      return regla.id === premioCatalogoSeleccionadoId
+    }
+
+    return true
+  })
+  const totalPremiosVisibles = premiosVisibles.length + premiosCatalogoVisibles.length
 
   return (
     <main
@@ -625,135 +826,280 @@ const ClientePublico = ({ onAccesoAdmin }) => {
                 Tus recompensas
               </h3>
               <p className="mt-2 text-sm text-stone-300/70">
-                {premiosCanjeables.length > 1
-                  ? 'Si tienes varios premios disponibles, toca el que deseas canjear y pulsa Canjear.'
-                  : `Los premios pendientes vencen a los ${PRIZE_EXPIRATION_DAYS} días desde su asignación.`}
+                Solo puedes elegir un premio por nivel. Al seleccionar uno, los demás de ese nivel se deshabilitan.
               </p>
 
               <ul className="mt-4 space-y-3">
-                {premiosVisibles.length === 0 ? (
+                {totalPremiosVisibles === 0 ? (
                   <li className="rounded-2xl border border-dashed border-amber-800/35 bg-black/40 px-4 py-5 text-center text-sm text-stone-400">
-                    Aún no tienes premios pendientes o vencidos.
+                    Aún no hay premios disponibles para tu nivel.
                   </li>
-                ) : (
-                  premiosVisibles.map((premio) => {
-                    const status = premio.statusEfectivo
-                    const esPendiente = status === STATUS_PENDIENTE
-                    const esEnSolicitud = status === STATUS_EN_SOLICITUD
-                    const esVencido = status === STATUS_VENCIDO
-                    const diasRestantes = diasRestantesPremio(premio)
-                    const estaSeleccionado = premioSeleccionadoId === premio.id
-                    const enviando = canjeLoadingId === premio.id
+                ) : null}
 
-                    return (
-                      <li key={premio.id || `${premio.nombre}-${premio.fechaAsignacion}`}>
-                        <div
-                          role={esPendiente ? 'button' : undefined}
-                          tabIndex={esPendiente ? 0 : undefined}
-                          onClick={() => {
-                            if (esPendiente) {
-                              setPremioSeleccionadoId(premio.id)
-                              setError('')
-                            }
-                          }}
-                          onKeyDown={(event) => {
-                            if (!esPendiente) return
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              setPremioSeleccionadoId(premio.id)
-                              setError('')
-                            }
-                          }}
-                          className={`rounded-2xl border px-4 py-3 transition ${
-                            esVencido
-                              ? 'border-rose-500/30 bg-gradient-to-r from-rose-950/60 to-stone-950/80'
-                              : esEnSolicitud
-                                ? 'border-sky-500/40 bg-gradient-to-r from-sky-950/50 to-stone-950/70'
+                {premiosVisibles.map((premio) => {
+                  const status = premio.statusEfectivo
+                  const esPendiente = status === STATUS_PENDIENTE
+                  const esEnSolicitud = status === STATUS_EN_SOLICITUD
+                  const esVencido = status === STATUS_VENCIDO
+                  const bloqueadoPorNivel = esPremioBloqueadoPorNivel(
+                    premio.nivelId,
+                    premio.id,
+                    premio.premioId,
+                  )
+                  const diasRestantes = diasRestantesPremio(premio)
+                  const estaSeleccionado = premioSeleccionadoId === premio.id
+                  const enviando = canjeLoadingId === premio.id
+                  const sePuedeElegir = esPendiente && !bloqueadoPorNivel
+
+                  return (
+                    <li key={`asignado-${premio.id}`}>
+                      <div
+                        role={sePuedeElegir ? 'button' : undefined}
+                        tabIndex={sePuedeElegir ? 0 : undefined}
+                        onClick={() => {
+                          if (sePuedeElegir) {
+                            setPremioSeleccionadoId(premio.id)
+                            setError('')
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (!sePuedeElegir) return
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setPremioSeleccionadoId(premio.id)
+                            setError('')
+                          }
+                        }}
+                        className={`rounded-2xl border px-4 py-3 transition ${
+                          esVencido
+                            ? 'border-rose-500/30 bg-gradient-to-r from-rose-950/60 to-stone-950/80'
+                            : esEnSolicitud
+                              ? 'border-sky-500/40 bg-gradient-to-r from-sky-950/50 to-stone-950/70'
+                              : bloqueadoPorNivel
+                                ? 'border-stone-600/40 bg-stone-950/50 opacity-55'
                                 : estaSeleccionado
                                   ? 'border-amber-400/70 bg-gradient-to-r from-amber-900/70 to-orange-950/60 ring-2 ring-amber-400/40'
                                   : 'border-amber-700/30 bg-gradient-to-r from-amber-950/50 to-stone-950/70 hover:border-amber-500/50'
-                          } ${esPendiente ? 'cursor-pointer' : ''}`}
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="font-bold text-amber-50">{premio.nombre}</p>
-                              {premio.descripcion ? (
-                                <p className="mt-0.5 text-sm text-stone-400">{premio.descripcion}</p>
-                              ) : null}
-                              {typeof premio.puntosCosto === 'number' ? (
-                                <p className="mt-1 text-xs font-semibold text-amber-200/70">
-                                  {premio.puntosCosto.toLocaleString('es-CR')} pts
-                                </p>
-                              ) : null}
-                              {esPendiente ? (
-                                <p className="mt-2 text-sm font-semibold text-amber-300">
-                                  {diasRestantes === 0
-                                    ? 'Vence hoy'
-                                    : diasRestantes === 1
-                                      ? 'Te queda 1 día antes de vencer'
-                                      : `Te quedan ${diasRestantes} días antes de vencer`}
-                                </p>
-                              ) : null}
-                              {esEnSolicitud ? (
-                                <p className="mt-2 text-sm font-semibold text-sky-300">
-                                  Tu solicitud está en revisión por el administrador.
-                                </p>
-                              ) : null}
-                              {esVencido ? (
-                                <p className="mt-2 text-sm font-semibold text-rose-300">
-                                  Este premio ya venció (más de {PRIZE_EXPIRATION_DAYS} días)
-                                </p>
-                              ) : null}
-                            </div>
-                            <span
-                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
-                                esVencido
-                                  ? 'bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40'
-                                  : esEnSolicitud
-                                    ? 'bg-sky-400/15 text-sky-200 ring-1 ring-sky-300/40'
+                        } ${sePuedeElegir ? 'cursor-pointer' : ''}`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-bold text-amber-50">{premio.nombre}</p>
+                            {premio.descripcion ? (
+                              <p className="mt-0.5 text-sm text-stone-400">{premio.descripcion}</p>
+                            ) : null}
+                            {typeof premio.puntosCosto === 'number' ? (
+                              <p className="mt-1 text-xs font-semibold text-amber-200/70">
+                                {premio.puntosCosto.toLocaleString('es-CR')} pts
+                              </p>
+                            ) : null}
+                            {esPendiente ? (
+                              <p className="mt-2 text-sm font-semibold text-amber-300">
+                                {diasRestantes === 0
+                                  ? 'Vence hoy'
+                                  : diasRestantes === 1
+                                    ? 'Te queda 1 día antes de vencer'
+                                    : `Te quedan ${diasRestantes} días antes de vencer`}
+                              </p>
+                            ) : null}
+                            {esEnSolicitud ? (
+                              <p className="mt-2 text-sm font-semibold text-sky-300">
+                                Tu solicitud está en revisión por el administrador.
+                              </p>
+                            ) : null}
+                            {bloqueadoPorNivel ? (
+                              <p className="mt-2 text-sm font-semibold text-stone-400">
+                                Deshabilitado: ya elegiste otro premio de este nivel.
+                              </p>
+                            ) : null}
+                            {esVencido ? (
+                              <p className="mt-2 text-sm font-semibold text-rose-300">
+                                Este premio ya venció (más de {PRIZE_EXPIRATION_DAYS} días)
+                              </p>
+                            ) : null}
+                          </div>
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                              esVencido
+                                ? 'bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40'
+                                : esEnSolicitud
+                                  ? 'bg-sky-400/15 text-sky-200 ring-1 ring-sky-300/40'
+                                  : bloqueadoPorNivel
+                                    ? 'bg-stone-500/20 text-stone-300 ring-1 ring-stone-400/40'
                                     : estaSeleccionado
                                       ? 'bg-amber-300/25 text-amber-100 ring-1 ring-amber-200/50'
                                       : 'bg-amber-400/15 text-amber-200 ring-1 ring-amber-300/40'
-                              }`}
-                            >
-                              {esVencido
-                                ? 'Vencido'
-                                : esEnSolicitud
-                                  ? 'En solicitud'
+                            }`}
+                          >
+                            {esVencido
+                              ? 'Vencido'
+                              : esEnSolicitud
+                                ? 'En solicitud'
+                                : bloqueadoPorNivel
+                                  ? 'No disponible'
                                   : estaSeleccionado
                                     ? 'Seleccionado'
-                                    : 'Pendiente'}
-                            </span>
-                          </div>
+                                    : 'Asignado'}
+                          </span>
+                        </div>
 
-                          {esPendiente ? (
+                        {esPendiente ? (
+                          <button
+                            type="button"
+                            disabled={canjeLoadingId !== null || !estaSeleccionado || bloqueadoPorNivel}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              handleSolicitarCanjeAsignado(premio)
+                            }}
+                            className="mt-3 w-full rounded-xl bg-gradient-to-r from-amber-600 to-orange-700 px-3 py-2.5 text-sm font-bold uppercase tracking-wide text-amber-50 transition hover:from-amber-500 hover:to-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {enviando ? 'Enviando...' : 'Canjear'}
+                          </button>
+                        ) : null}
+
+                        {esEnSolicitud ? (
+                          <button
+                            type="button"
+                            disabled
+                            className="mt-3 w-full cursor-not-allowed rounded-xl border border-sky-500/40 bg-sky-950/50 px-3 py-2.5 text-sm font-bold text-sky-100/90"
+                          >
+                            Esperando aprobación...
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  )
+                })}
+
+                {premiosCatalogoVisibles.map((regla) => {
+                  const selectionId = `catalogo:${regla.id}`
+                  const estaSeleccionado = premioSeleccionadoId === selectionId
+                  const enSolicitud = solicitudesPendientesCliente.some((item) => (
+                    item.origen === ORIGEN_PREMIO_CATALOGO
+                    && (item.premioId === regla.id || item.premioCatalogoId === regla.id)
+                  ))
+                  const bloqueadoPorNivel = esPremioBloqueadoPorNivel(regla.nivelId, regla.id, regla.id)
+                  const puntosCosto = Number(regla.puntosCosto) || 0
+                  const puedeCanjear = !enSolicitud && !bloqueadoPorNivel && puntosDisponibles >= puntosCosto
+                  const enviando = canjeLoadingId === selectionId
+                  const sePuedeElegir = !enSolicitud && !bloqueadoPorNivel
+
+                  return (
+                    <li key={`catalogo-${regla.id}`}>
+                      <div
+                        role={sePuedeElegir ? 'button' : undefined}
+                        tabIndex={sePuedeElegir ? 0 : undefined}
+                        onClick={() => {
+                          if (!sePuedeElegir) return
+                          setPremioSeleccionadoId(selectionId)
+                          setError('')
+                        }}
+                        onKeyDown={(event) => {
+                          if (!sePuedeElegir) return
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            setPremioSeleccionadoId(selectionId)
+                            setError('')
+                          }
+                        }}
+                        className={`rounded-2xl border px-4 py-3 transition ${
+                          enSolicitud
+                            ? 'border-sky-500/40 bg-gradient-to-r from-sky-950/50 to-stone-950/70'
+                            : bloqueadoPorNivel
+                              ? 'border-stone-600/40 bg-stone-950/50 opacity-55'
+                              : estaSeleccionado
+                                ? 'cursor-pointer border-amber-400/70 bg-gradient-to-r from-amber-900/70 to-orange-950/60 ring-2 ring-amber-400/40'
+                                : 'cursor-pointer border-amber-700/30 bg-gradient-to-r from-amber-950/50 to-stone-950/70 hover:border-amber-500/50'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-bold text-amber-50">{regla.nombre}</p>
+                            {regla.descripcion ? (
+                              <p className="mt-0.5 text-sm text-stone-400">{regla.descripcion}</p>
+                            ) : null}
+                            <p className="mt-1 text-xs font-semibold text-amber-200/70">
+                              {puntosCosto.toLocaleString('es-CR')} pts · Nivel {regla.nivelId}
+                            </p>
+                            {enSolicitud ? (
+                              <p className="mt-2 text-sm font-semibold text-sky-300">
+                                Tu solicitud está en revisión por el administrador.
+                              </p>
+                            ) : bloqueadoPorNivel ? (
+                              <p className="mt-2 text-sm font-semibold text-stone-400">
+                                Deshabilitado: ya elegiste otro premio de este nivel.
+                              </p>
+                            ) : !puedeCanjear ? (
+                              <p className="mt-2 text-sm font-semibold text-rose-300">
+                                Te faltan {(puntosCosto - puntosDisponibles).toLocaleString('es-CR')} pts
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-sm font-semibold text-amber-300">
+                                Disponible en tu nivel {nivelCliente}
+                              </p>
+                            )}
+                          </div>
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                              enSolicitud
+                                ? 'bg-sky-400/15 text-sky-200 ring-1 ring-sky-300/40'
+                                : bloqueadoPorNivel
+                                  ? 'bg-stone-500/20 text-stone-300 ring-1 ring-stone-400/40'
+                                  : estaSeleccionado
+                                    ? 'bg-amber-300/25 text-amber-100 ring-1 ring-amber-200/50'
+                                    : 'bg-emerald-400/15 text-emerald-200 ring-1 ring-emerald-300/40'
+                            }`}
+                          >
+                            {enSolicitud
+                              ? 'En solicitud'
+                              : bloqueadoPorNivel
+                                ? 'No disponible'
+                                : estaSeleccionado
+                                  ? 'Seleccionado'
+                                  : 'Disponible'}
+                          </span>
+                        </div>
+
+                        {enSolicitud ? (
+                          <button
+                            type="button"
+                            disabled
+                            className="mt-3 w-full cursor-not-allowed rounded-xl border border-sky-500/40 bg-sky-950/50 px-3 py-2.5 text-sm font-bold text-sky-100/90"
+                          >
+                            Esperando aprobación...
+                          </button>
+                        ) : (
+                          <div className="mt-3 space-y-2">
                             <button
                               type="button"
-                              disabled={canjeLoadingId !== null || !estaSeleccionado}
+                              disabled={canjeLoadingId !== null || !estaSeleccionado || !puedeCanjear}
                               onClick={(event) => {
                                 event.stopPropagation()
-                                handleSolicitarCanje(premio)
+                                handleSolicitarCanjeCatalogo(regla)
                               }}
-                              className="mt-3 w-full rounded-xl bg-gradient-to-r from-amber-600 to-orange-700 px-3 py-2.5 text-sm font-bold uppercase tracking-wide text-amber-50 transition hover:from-amber-500 hover:to-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="w-full rounded-xl bg-gradient-to-r from-amber-600 to-orange-700 px-3 py-2.5 text-sm font-bold uppercase tracking-wide text-amber-50 transition hover:from-amber-500 hover:to-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {enviando ? 'Enviando...' : 'Canjear'}
                             </button>
-                          ) : null}
-
-                          {esEnSolicitud ? (
-                            <button
-                              type="button"
-                              disabled
-                              className="mt-3 w-full cursor-not-allowed rounded-xl border border-sky-500/40 bg-sky-950/50 px-3 py-2.5 text-sm font-bold text-sky-100/90"
-                            >
-                              Esperando aprobación...
-                            </button>
-                          ) : null}
-                        </div>
-                      </li>
-                    )
-                  })
-                )}
+                            {estaSeleccionado ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  setPremioSeleccionadoId(null)
+                                  setError('')
+                                }}
+                                className="w-full rounded-xl border border-white/15 bg-transparent px-3 py-2 text-sm font-semibold text-amber-100/85 transition hover:border-amber-400/40 hover:bg-black/30"
+                              >
+                                Cambiar premio
+                              </button>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
             </article>
 
