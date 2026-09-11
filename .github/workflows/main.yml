@@ -1,0 +1,13 @@
+name: Prueba de Ejecucion
+
+on: [push]
+
+jobs:
+  verificar-sistema:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar codigo
+        uses: actions/checkout@v4
+
+      - name: Mensaje de confirmacion
+        run: echo "¡El sistema de GitHub Actions ya esta activo y funcionando!"
