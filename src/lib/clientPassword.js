@@ -43,11 +43,9 @@ export const verifyClientPassword = async (password, storedHash) => {
 export const stripClientPassword = (clienteData = {}) => {
   if (!clienteData || typeof clienteData !== 'object') return clienteData
 
-  const {
-    contraseña: _contraseña,
-    contraseñaHash: _contraseñaHash,
-    ...safeData
-  } = clienteData
+  const safeData = { ...clienteData }
+  delete safeData.contraseña
+  delete safeData.contraseñaHash
 
   return safeData
 }

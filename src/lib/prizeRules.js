@@ -106,13 +106,14 @@ export const normalizePrizeNivelId = (nivelId) => {
 
 export const normalizePrizeRules = (rules = []) =>
   (rules || [])
-    .filter((rule) => rule && rule.nombre && Number(rule.umbral) > 0 && Number(rule.puntosCosto) > 0)
+    .filter((rule) => rule && rule.nombre && Number(rule.umbral) > 0)
     .map((rule) => ({
       id: rule.id || crypto.randomUUID(),
       nombre: rule.nombre,
-      descripcion: rule.descripcion || 'Recompensa configurada por umbral de compra.',
+      descripcion: rule.descripcion || 'Recompensa configurada por nivel de fidelidad.',
       umbral: Number(rule.umbral),
-      puntosCosto: Number(rule.puntosCosto),
+      // Histórico: el canje por nivel ya no descuenta puntos de trayectoria.
+      puntosCosto: Math.max(0, Number(rule.puntosCosto) || 0),
       nivelId: normalizePrizeNivelId(rule.nivelId),
     }))
 
@@ -214,3 +215,187 @@ export const canRedeemAssignedPrize = (premio, now = new Date()) =>
 
 export const ORIGEN_PREMIO_ASIGNADO = 'asignado'
 export const ORIGEN_PREMIO_CATALOGO = 'catalogo'
+
+/** Niveles cuyo premio ya fue canjeado/aprobado en el ciclo actual. */
+export const obtenerNivelesCanjeados = (premios = []) => {
+  const niveles = new Set()
+
+  normalizeClientPremios(premios).forEach((premio) => {
+    if (resolveClientPrizeStatus(premio) !== STATUS_CANJEADO) return
+    if (!premio?.nivelId) return
+    niveles.add(normalizePrizeNivelId(premio.nivelId))
+  })
+
+  return niveles
+}
+
+/** True si el nivel del canje es el máximo del programa (Oro). */
+export const esCanjeDeNivelMaximo = (nivelId, levels = []) => {
+  const normalizedLevels = [...(Array.isArray(levels) ? levels : [])]
+    .filter((level) => level?.id)
+    .sort((a, b) => (Number(a.puntosMinimos) || 0) - (Number(b.puntosMinimos) || 0))
+
+  const nivelMaximo = normalizedLevels[normalizedLevels.length - 1]
+  if (!nivelMaximo) {
+    return normalizePrizeNivelId(nivelId) === 'oro'
+  }
+
+  return normalizePrizeNivelId(nivelId) === String(nivelMaximo.id).toLowerCase()
+}
+
+export const obtenerIdNivelMaximo = (levels = []) => {
+  const normalizedLevels = [...(Array.isArray(levels) ? levels : [])]
+    .filter((level) => level?.id)
+    .sort((a, b) => (Number(a.puntosMinimos) || 0) - (Number(b.puntosMinimos) || 0))
+
+  return String(normalizedLevels[normalizedLevels.length - 1]?.id || 'oro').toLowerCase()
+}
+
+/**
+ * Cierra el ciclo SOLO si el premio Oro ya se reclamó o ya venció,
+ * y no quedan premios activos pendientes/en solicitud.
+ * Llegar a 50 pts (nivel Oro) por sí solo NUNCA reinicia el ciclo.
+ */
+export const evaluarCierreCiclo = ({ premios = [], levels = [] } = {}) => {
+  const resolved = resolveClientPrizes(premios)
+  const hayActivos = resolved.some((premio) => (
+    premio.statusEfectivo === STATUS_PENDIENTE
+    || premio.statusEfectivo === STATUS_EN_SOLICITUD
+  ))
+
+  if (hayActivos) {
+    return { cerrar: false, motivo: null }
+  }
+
+  const nivelMaximoId = obtenerIdNivelMaximo(levels)
+  const oroCanjeado = obtenerNivelesCanjeados(premios).has(nivelMaximoId)
+  const oroVencido = resolved.some((premio) => (
+    normalizePrizeNivelId(premio.nivelId) === nivelMaximoId
+    && premio.statusEfectivo === STATUS_VENCIDO
+  ))
+
+  if (oroCanjeado) {
+    return { cerrar: true, motivo: 'oro_canjeado' }
+  }
+
+  if (oroVencido) {
+    return { cerrar: true, motivo: 'oro_vencido' }
+  }
+
+  return { cerrar: false, motivo: null }
+}
+
+/** Marca en datos persistibles los premios que ya superaron los 30 días. */
+export const marcarPremiosVencidos = (premios = [], now = new Date()) => {
+  let cambio = false
+
+  const nextPremios = normalizeClientPremios(premios).map((premio) => {
+    const statusEfectivo = resolveClientPrizeStatus(premio, now)
+    if (
+      statusEfectivo === STATUS_VENCIDO
+      && premio.status !== STATUS_VENCIDO
+      && premio.status !== STATUS_CANJEADO
+    ) {
+      cambio = true
+      return {
+        ...premio,
+        status: STATUS_VENCIDO,
+        fechaVencimiento: now.toISOString(),
+      }
+    }
+    return premio
+  })
+
+  return { premios: nextPremios, cambio }
+}
+
+/**
+ * Tras un canje aprobado: conserva puntos/premios si aún hay pendientes.
+ * Solo reinicia (puntos + compras + premios) cuando el Oro ya fue
+ * reclamado o venció y no quedan premios activos.
+ */
+export const buildClienteUpdatesTrasCanjeAprobado = ({
+  puntosTrasCanje,
+  premiosTrasCanje,
+  premiosCanjeados,
+  levels = [],
+}) => {
+  const base = {
+    puntos: Math.max(0, Number(puntosTrasCanje) || 0),
+    premios: Array.isArray(premiosTrasCanje) ? premiosTrasCanje : [],
+    premiosCanjeados: Number(premiosCanjeados) || 0,
+    reinicioCiclo: false,
+  }
+
+  const cierre = evaluarCierreCiclo({
+    premios: base.premios,
+    levels,
+  })
+
+  if (!cierre.cerrar) {
+    return base
+  }
+
+  return {
+    puntos: 0,
+    montoPendientePuntos: 0,
+    premios: [],
+    premiosCanjeados: base.premiosCanjeados,
+    reinicioCiclo: true,
+    motivoCierre: cierre.motivo,
+  }
+}
+
+/**
+ * Aplica vencimientos y, si corresponde, cierra el ciclo.
+ * No reinicia solo por haber alcanzado el nivel Oro.
+ */
+export const buildClienteUpdatesPorVencimiento = ({
+  puntos,
+  montoPendientePuntos = 0,
+  premios = [],
+  premiosCanjeados = 0,
+  levels = [],
+  now = new Date(),
+} = {}) => {
+  const { premios: premiosMarcados, cambio: premiosCambiaron } = marcarPremiosVencidos(premios, now)
+  const cierre = evaluarCierreCiclo({
+    premios: premiosMarcados,
+    levels,
+  })
+
+  if (cierre.cerrar) {
+    return {
+      debePersistir: true,
+      reinicioCiclo: true,
+      motivoCierre: cierre.motivo,
+      updates: {
+        puntos: 0,
+        montoPendientePuntos: 0,
+        premios: [],
+        premiosCanjeados: Number(premiosCanjeados) || 0,
+      },
+    }
+  }
+
+  if (premiosCambiaron) {
+    return {
+      debePersistir: true,
+      reinicioCiclo: false,
+      motivoCierre: null,
+      updates: {
+        puntos: Math.max(0, Number(puntos) || 0),
+        montoPendientePuntos: normalizeMontoPendiente(montoPendientePuntos),
+        premios: premiosMarcados,
+        premiosCanjeados: Number(premiosCanjeados) || 0,
+      },
+    }
+  }
+
+  return {
+    debePersistir: false,
+    reinicioCiclo: false,
+    motivoCierre: null,
+    updates: null,
+  }
+}

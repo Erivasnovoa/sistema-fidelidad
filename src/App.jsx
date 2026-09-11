@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import {
   addDoc,
@@ -24,7 +25,11 @@ import {
   normalizePrizeRules,
   parseMontoCompra,
   resolveClientPrizes,
+  buildClienteUpdatesPorVencimiento,
+  buildClienteUpdatesTrasCanjeAprobado,
+  esCanjeDeNivelMaximo,
   normalizeClientPremios,
+  obtenerNivelesCanjeados,
   ORIGEN_PREMIO_CATALOGO,
   SOLICITUD_APROBADA,
   SOLICITUD_PENDIENTE,
@@ -35,6 +40,7 @@ import {
   STATUS_VENCIDO,
 } from './lib/prizeRules'
 import {
+  buildTrayectoriaCliente,
   clienteAlcanzaNivel,
   DEFAULT_CLIENT_LEVELS,
   normalizeClientLevels,
@@ -46,8 +52,19 @@ import {
   MIN_CLIENT_PASSWORD_LENGTH,
   validateClientPassword,
 } from './lib/clientPassword'
+import {
+  findClienteByTelefono,
+  MSG_TELEFONO_YA_REGISTRADO_ADMIN,
+  normalizeClientPhone,
+} from './lib/clientPhone'
 import ClientePublico from './ClientePublico'
 import './App.css'
+
+/** Link público para registro de clientes (QR admin). */
+const PUBLIC_SITE_URL = (
+  import.meta.env.VITE_PUBLIC_SITE_URL
+  || 'https://sistema-fidelidad-omega.vercel.app'
+).replace(/\/$/, '')
 
 const initialPrizeRules = [
   {
@@ -55,7 +72,7 @@ const initialPrizeRules = [
     nombre: 'Descuento 10%',
     descripcion: 'Vale para tu próxima compra.',
     umbral: 500,
-    puntosCosto: 300,
+    puntosCosto: 0,
     nivelId: 'bronce',
   },
   {
@@ -63,7 +80,7 @@ const initialPrizeRules = [
     nombre: 'Producto gratis',
     descripcion: 'Un producto sorpresa en tienda.',
     umbral: 1500,
-    puntosCosto: 800,
+    puntosCosto: 0,
     nivelId: 'plata',
   },
   {
@@ -71,7 +88,7 @@ const initialPrizeRules = [
     nombre: 'Visita premium',
     descripcion: 'Atención especial y beneficios exclusivos.',
     umbral: 2500,
-    puntosCosto: 1500,
+    puntosCosto: 0,
     nivelId: 'oro',
   },
 ]
@@ -95,7 +112,7 @@ const diasDesdeFecha = (fechaIso) => {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24))
 }
 
-const aplicarReglaInactividad = async (clienteData) => {
+const aplicarReglaInactividad = async (clienteData, levels = DEFAULT_CLIENT_LEVELS) => {
   const puntos = clienteData.puntos ?? 0
   const estadoActual = obtenerEstadoCliente(clienteData)
   const diasInactivo = diasDesdeFecha(clienteData.fechaUltimaCompra)
@@ -126,6 +143,28 @@ const aplicarReglaInactividad = async (clienteData) => {
     }
   }
 
+  // Vencimiento de premios: si el Oro venció (u Oro ya canjeado sin activos), cierra ciclo.
+  // Tener nivel Oro sin reclamar NO reinicia puntos.
+  const cierrePorPremios = buildClienteUpdatesPorVencimiento({
+    puntos,
+    montoPendientePuntos: montoPendiente,
+    premios: clienteData.premios,
+    premiosCanjeados: clienteData.premiosCanjeados,
+    levels,
+  })
+
+  if (cierrePorPremios.debePersistir && cierrePorPremios.updates) {
+    const clienteDocRef = doc(db, 'clientes', clienteData.id)
+    await updateDoc(clienteDocRef, cierrePorPremios.updates)
+
+    return {
+      ...clienteData,
+      ...cierrePorPremios.updates,
+      estado: estadoActual,
+      _cicloReiniciadoPorVencimiento: cierrePorPremios.reinicioCiclo,
+    }
+  }
+
   return {
     ...clienteData,
     estado: estadoActual,
@@ -136,7 +175,9 @@ const App = () => {
   const [vistaActual, setVistaActual] = useState('cliente')
   const [telefono, setTelefono] = useState('')
   const [cliente, setCliente] = useState(null)
+  const [clientesCatalogo, setClientesCatalogo] = useState([])
   const [loading, setLoading] = useState(false)
+  const busquedaAutoRef = useRef(0)
   const [updatingPoints, setUpdatingPoints] = useState(false)
   const [error, setError] = useState('')
   const [nombre, setNombre] = useState('')
@@ -210,6 +251,11 @@ const App = () => {
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState('')
   const [solicitudesPendientes, setSolicitudesPendientes] = useState([])
+  const [qrLinkCopiado, setQrLinkCopiado] = useState(false)
+  const [filtroEstadoClientes, setFiltroEstadoClientes] = useState('todos')
+  const [filtroTextoClientes, setFiltroTextoClientes] = useState('')
+  const [showClientesModal, setShowClientesModal] = useState(false)
+  const [levelsSaving, setLevelsSaving] = useState(false)
   const [resolviendoSolicitud, setResolviendoSolicitud] = useState(false)
 
   useEffect(() => {
@@ -224,12 +270,36 @@ const App = () => {
         setShowConfigModal(false)
         setShowRegisterModal(false)
         setShowEditClientModal(false)
+        setShowClientesModal(false)
         setSolicitudesPendientes([])
       }
     })
 
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    if (!user) {
+      return undefined
+    }
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'clientes'),
+      (snapshot) => {
+        setClientesCatalogo(
+          snapshot.docs.map((clienteDoc) => ({
+            id: clienteDoc.id,
+            ...clienteDoc.data(),
+          })),
+        )
+      },
+      (err) => {
+        console.error(err)
+      },
+    )
+
+    return unsubscribe
+  }, [user])
 
   useEffect(() => {
     if (!user) return undefined
@@ -326,6 +396,56 @@ const App = () => {
     setShowEditClientModal(true)
   }
 
+  const resetBusquedaClienteUi = () => {
+    setMontoCompraAsignacion('')
+    setContraseñaClienteAdmin('')
+    setShowEditClientModal(false)
+    setEditNombre('')
+    setEditTelefono('')
+    setEditContraseña('')
+  }
+
+  const cargarClienteSeleccionado = async (clienteData, { silencioso = false } = {}) => {
+    if (!clienteData?.id) return
+
+    const requestId = ++busquedaAutoRef.current
+    setLoading(true)
+    if (!silencioso) {
+      setError('')
+      setSuccessMessage('')
+    }
+    resetBusquedaClienteUi()
+
+    try {
+      const clienteResuelto = await aplicarReglaInactividad(clienteData, clientLevels)
+      if (requestId !== busquedaAutoRef.current) return
+
+      setCliente(clienteResuelto)
+      setTelefono(String(clienteResuelto.telefono || clienteData.telefono || ''))
+
+      if (
+        clienteResuelto.estado === ESTADO_INACTIVO
+        && (clienteData.puntos ?? 0) > 0
+        && (clienteResuelto.puntos ?? 0) === 0
+      ) {
+        setSuccessMessage('Cliente inactivo por más de 60 días: sus puntos se reiniciaron a 0.')
+      } else if (clienteResuelto._cicloReiniciadoPorVencimiento) {
+        setSuccessMessage(
+          'El premio Oro venció sin canjearse: el ciclo se reinició (puntos y compras en cero).',
+        )
+      }
+    } catch (err) {
+      if (requestId !== busquedaAutoRef.current) return
+      setCliente(null)
+      setError('No se pudo consultar el cliente. Intenta nuevamente.')
+      console.error(err)
+    } finally {
+      if (requestId === busquedaAutoRef.current) {
+        setLoading(false)
+      }
+    }
+  }
+
   const handleSearch = async (event) => {
     event.preventDefault()
 
@@ -337,16 +457,20 @@ const App = () => {
       return
     }
 
+    const matchLocal = clientesCatalogo.find(
+      (item) => String(item.telefono || '') === telefonoBuscado,
+    )
+
+    if (matchLocal) {
+      await cargarClienteSeleccionado(matchLocal)
+      return
+    }
+
     setLoading(true)
     setError('')
     setSuccessMessage('')
     setCliente(null)
-    setMontoCompraAsignacion('')
-    setContraseñaClienteAdmin('')
-    setShowEditClientModal(false)
-    setEditNombre('')
-    setEditTelefono('')
-    setEditContraseña('')
+    resetBusquedaClienteUi()
 
     try {
       const clientesRef = collection(db, 'clientes')
@@ -355,28 +479,46 @@ const App = () => {
 
       if (snapshot.empty) {
         setError('No se encontró ningún cliente con ese teléfono.')
+        setLoading(false)
         return
       }
 
       const clienteDoc = snapshot.docs[0]
-      const clienteData = { id: clienteDoc.id, ...clienteDoc.data() }
-      const clienteResuelto = await aplicarReglaInactividad(clienteData)
-      setCliente(clienteResuelto)
-
-      if (
-        clienteResuelto.estado === ESTADO_INACTIVO
-        && (clienteData.puntos ?? 0) > 0
-        && (clienteResuelto.puntos ?? 0) === 0
-      ) {
-        setSuccessMessage('Cliente inactivo por más de 60 días: sus puntos se reiniciaron a 0.')
-      }
+      await cargarClienteSeleccionado({ id: clienteDoc.id, ...clienteDoc.data() })
     } catch (err) {
       setError('No se pudo consultar el cliente. Intenta nuevamente.')
       console.error(err)
-    } finally {
       setLoading(false)
     }
   }
+
+  const telefonoFiltro = telefono.trim()
+  const clientesFiltrados = useMemo(() => {
+    if (!telefonoFiltro) return []
+
+    const filtro = telefonoFiltro.toLowerCase()
+    return clientesCatalogo
+      .filter((item) => String(item.telefono || '').toLowerCase().includes(filtro))
+      .sort((a, b) => String(a.telefono || '').localeCompare(String(b.telefono || '')))
+      .slice(0, 8)
+  }, [clientesCatalogo, telefonoFiltro])
+
+  useEffect(() => {
+    if (!user || !telefonoFiltro) return undefined
+
+    const exacto = clientesCatalogo.find(
+      (item) => String(item.telefono || '') === telefonoFiltro,
+    )
+
+    if (!exacto) return undefined
+    if (cliente?.id === exacto.id) return undefined
+
+    const timer = window.setTimeout(() => {
+      cargarClienteSeleccionado(exacto, { silencioso: true })
+    }, 280)
+
+    return () => window.clearTimeout(timer)
+  }, [user, telefonoFiltro, clientesCatalogo, cliente?.id, clientLevels])
 
   const handleUpdatePoints = async (amount) => {
     if (!cliente?.id) return false
@@ -468,6 +610,157 @@ const App = () => {
     }
   }
 
+  const handleUpdateClientLevel = (levelId, puntosMinimos) => {
+    const nextPoints = Number(puntosMinimos)
+
+    setClientLevels((currentLevels) => currentLevels.map((level) => (
+      level.id === levelId
+        ? {
+            ...level,
+            puntosMinimos: Number.isNaN(nextPoints) || nextPoints < 0 ? 0 : nextPoints,
+          }
+        : level
+    )))
+  }
+
+  const handleSaveClientLevels = async () => {
+    const bronceRaw = clientLevels.find((level) => level.id === 'bronce')
+    const plataRaw = clientLevels.find((level) => level.id === 'plata')
+    const oroRaw = clientLevels.find((level) => level.id === 'oro')
+    const broncePts = Number(bronceRaw?.puntosMinimos)
+    const plataPts = Number(plataRaw?.puntosMinimos)
+    const oroPts = Number(oroRaw?.puntosMinimos)
+
+    if (
+      Number.isNaN(broncePts)
+      || Number.isNaN(plataPts)
+      || Number.isNaN(oroPts)
+      || broncePts <= 0
+      || plataPts <= broncePts
+      || oroPts <= plataPts
+    ) {
+      setError('Los umbrales deben ser crecientes: Bronce < Plata < Oro, y Bronce mayor a 0.')
+      setSuccessMessage('')
+      return
+    }
+
+    const levels = normalizeClientLevels(clientLevels)
+
+    setLevelsSaving(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      setClientLevels(levels)
+
+      const rulesDocRef = doc(db, 'configuracionPremios', 'reglas')
+      await setDoc(rulesDocRef, {
+        reglas: normalizePrizeRules(prizeRules),
+        niveles: levels,
+        montoPorPunto: normalizeMontoPorPunto(montoPorPunto),
+        updatedAt: new Date().toISOString(),
+      }, { merge: true })
+
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('fidelidad-client-levels', JSON.stringify(levels))
+      }
+
+      // Recalcular y persistir trayectoria de todos los clientes con los nuevos umbrales.
+      const clientesSnap = await getDocs(collection(db, 'clientes'))
+      const docs = clientesSnap.docs
+      const CHUNK = 400
+
+      for (let offset = 0; offset < docs.length; offset += CHUNK) {
+        const batch = writeBatch(db)
+        const slice = docs.slice(offset, offset + CHUNK)
+
+        slice.forEach((clienteDoc) => {
+          const data = clienteDoc.data()
+          const trayectoria = buildTrayectoriaCliente(data.puntos ?? 0, levels)
+          batch.update(clienteDoc.ref, {
+            trayectoria,
+            nivelId: trayectoria.nivelId,
+            nivelNombre: trayectoria.nivelNombre,
+          })
+        })
+
+        await batch.commit()
+      }
+
+      if (cliente?.id) {
+        const trayectoriaActual = buildTrayectoriaCliente(cliente.puntos ?? 0, levels)
+        setCliente((current) => (
+          current
+            ? {
+                ...current,
+                trayectoria: trayectoriaActual,
+                nivelId: trayectoriaActual.nivelId,
+                nivelNombre: trayectoriaActual.nivelNombre,
+              }
+            : current
+        ))
+      }
+
+      setSuccessMessage(
+        `Niveles actualizados. Trayectoria recalculada para ${docs.length} cliente${docs.length === 1 ? '' : 's'}.`,
+      )
+    } catch (err) {
+      setError('No se pudieron guardar los niveles ni ajustar las trayectorias.')
+      console.error(err)
+    } finally {
+      setLevelsSaving(false)
+    }
+  }
+
+  const handleRestoreDefaultLevels = () => {
+    setClientLevels(DEFAULT_CLIENT_LEVELS)
+    setError('')
+    setSuccessMessage('Umbrales restaurados a Bronce 10, Plata 30 y Oro 50. Guarda para aplicarlos a todos los clientes.')
+  }
+
+  const handleDeleteCliente = async () => {
+    if (!cliente?.id) return
+
+    const nombreCliente = cliente.nombre || 'este cliente'
+    const telefonoCliente = cliente.telefono || 'sin teléfono'
+    const confirmar = window.confirm(
+      `¿Eliminar a "${nombreCliente}" (${telefonoCliente})?\n\nEsta acción no se puede deshacer. Se borrarán sus puntos, premios y datos del sistema.`,
+    )
+
+    if (!confirmar) return
+
+    setUpdatingPoints(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const clienteId = cliente.id
+      const batch = writeBatch(db)
+
+      batch.delete(doc(db, 'clientes', clienteId))
+
+      solicitudesPendientes
+        .filter((item) => item.clienteId === clienteId)
+        .forEach((item) => {
+          batch.delete(doc(db, 'solicitudesCanje', item.id))
+        })
+
+      await batch.commit()
+
+      setCliente(null)
+      setTelefono('')
+      setMontoCompraAsignacion('')
+      setContraseñaClienteAdmin('')
+      setShowEditClientModal(false)
+      setSuccessMessage(`Cliente "${nombreCliente}" eliminado correctamente.`)
+    } catch (err) {
+      setError('No se pudo eliminar el cliente. Intenta nuevamente.')
+      console.error(err)
+    } finally {
+      setUpdatingPoints(false)
+    }
+  }
+
   const handleAssignPurchasePoints = async () => {
     if (!cliente?.id) return
 
@@ -542,15 +835,29 @@ const App = () => {
     if (!cliente?.id) return
 
     const puntosActuales = cliente.puntos ?? 0
-    const puntosRequeridos = premio.puntosCosto ?? premio.costo
     const nivelRequerido = obtenerNivelPorId(premio.nivelId, clientLevels)
+    const nivelPremio = premio.nivelId || 'bronce'
+
+    if (obtenerNivelesCanjeados(cliente.premios).has(nivelPremio)) {
+      setError(`Este cliente ya canjeó un premio de nivel ${nivelRequerido.nombre} en el ciclo actual.`)
+      return
+    }
 
     if (!clienteAlcanzaNivel(puntosActuales, premio.nivelId, clientLevels)) {
       setError(`Este premio requiere nivel ${nivelRequerido.nombre} o superior.`)
       return
     }
 
-    if (puntosActuales < puntosRequeridos) return
+    // Un premio por nivel: no descuenta puntos (la trayectoria sigue por compras).
+    const yaTienePremioNivel = normalizeClientPremios(cliente.premios).some((item) => (
+      (item.nivelId || 'bronce') === nivelPremio
+      && item.status !== STATUS_CANJEADO
+      && item.status !== STATUS_VENCIDO
+    ))
+    if (yaTienePremioNivel) {
+      setError(`Este cliente ya tiene un premio activo de nivel ${nivelRequerido.nombre}.`)
+      return
+    }
 
     setUpdatingPoints(true)
     setError('')
@@ -558,29 +865,29 @@ const App = () => {
 
     try {
       const clienteDocRef = doc(db, 'clientes', cliente.id)
-      const nextPoints = puntosActuales - puntosRequeridos
       const premioAsignado = {
         id: crypto.randomUUID(),
         premioId: premio.id,
         nombre: premio.nombre,
         descripcion: premio.descripcion || '',
-        puntosCosto: puntosRequeridos,
-        nivelId: premio.nivelId || 'bronce',
+        puntosCosto: 0,
+        nivelId: nivelPremio,
         fechaAsignacion: new Date().toISOString(),
         status: STATUS_PENDIENTE,
       }
       const nextPremios = [...normalizeClientPremios(cliente.premios), premioAsignado]
 
       await updateDoc(clienteDocRef, {
-        puntos: nextPoints,
         premios: nextPremios,
       })
       setCliente((currentCliente) => (
         currentCliente
-          ? { ...currentCliente, puntos: nextPoints, premios: nextPremios }
+          ? { ...currentCliente, premios: nextPremios }
           : currentCliente
       ))
-      setSuccessMessage(`Premio "${premio.nombre}" asignado. Tienes 30 días para canjearlo.`)
+      setSuccessMessage(
+        `Premio "${premio.nombre}" asignado (nivel ${nivelRequerido.nombre}). Los puntos de trayectoria no se modifican.`,
+      )
     } catch (err) {
       setError('No se pudo asignar el premio. Intenta nuevamente.')
       console.error(err)
@@ -609,17 +916,30 @@ const App = () => {
           : premio
       ))
       const nextRedeemed = (cliente.premiosCanjeados ?? 0) + 1
-
-      await updateDoc(clienteDocRef, {
-        premios: nextPremios,
+      const updates = buildClienteUpdatesTrasCanjeAprobado({
+        puntosTrasCanje: cliente.puntos ?? 0,
+        premiosTrasCanje: nextPremios,
         premiosCanjeados: nextRedeemed,
+        levels: clientLevels,
       })
+      const { reinicioCiclo, ...clienteUpdates } = updates
+      delete clienteUpdates.motivoCierre
+
+      await updateDoc(clienteDocRef, clienteUpdates)
       setCliente((currentCliente) => (
         currentCliente
-          ? { ...currentCliente, premios: nextPremios, premiosCanjeados: nextRedeemed }
+          ? { ...currentCliente, ...clienteUpdates }
           : currentCliente
       ))
-      setSuccessMessage(`Premio "${premioAsignado.nombre}" canjeado correctamente.`)
+      setSuccessMessage(
+        reinicioCiclo
+          ? 'Premio Oro canjeado. Ciclo reiniciado: puntos y compras en cero.'
+          : `Premio "${premioAsignado.nombre}" canjeado correctamente.${
+            esCanjeDeNivelMaximo(premioAsignado.nivelId, clientLevels)
+              ? ' Aún hay premios pendientes: el ciclo se reiniciará al reclamarlos o cuando venzan.'
+              : ''
+          }`,
+      )
     } catch (err) {
       setError('No se pudo canjear el premio. Intenta nuevamente.')
       console.error(err)
@@ -643,15 +963,12 @@ const App = () => {
 
     try {
       const clienteDocRef = doc(db, 'clientes', cliente.id)
-      const puntosDevolver = Number(premioAsignado.puntosCosto) || 0
-      const nextPoints = (cliente.puntos ?? 0) + puntosDevolver
       const nextPremios = normalizeClientPremios(cliente.premios).filter(
         (premio) => premio.id !== premioAsignado.id,
       )
       const batch = writeBatch(db)
 
       batch.update(clienteDocRef, {
-        puntos: nextPoints,
         premios: nextPremios,
       })
 
@@ -666,11 +983,11 @@ const App = () => {
 
       setCliente((currentCliente) => (
         currentCliente
-          ? { ...currentCliente, puntos: nextPoints, premios: nextPremios }
+          ? { ...currentCliente, premios: nextPremios }
           : currentCliente
       ))
       setSuccessMessage(
-        `Premio "${premioAsignado.nombre}" cancelado. Se devolvieron ${puntosDevolver} pts.`,
+        `Premio "${premioAsignado.nombre}" cancelado. La trayectoria de puntos no se modifica.`,
       )
     } catch (err) {
       setError('No se pudo cancelar el premio. Intenta nuevamente.')
@@ -714,19 +1031,24 @@ const App = () => {
         (premio) => premio.id === solicitud.premioId,
       )
       const puntosActuales = clienteData.puntos ?? 0
-      const puntosCosto = Number(solicitud.puntosCosto) || 0
+      const nivelSolicitud = solicitud.nivelId || 'bronce'
+      const nivelesCanjeados = obtenerNivelesCanjeados(premiosActuales)
+
+      if (nivelesCanjeados.has(nivelSolicitud)) {
+        setError('Este cliente ya canjeó un premio de ese nivel en el ciclo actual.')
+        await updateDoc(doc(db, 'solicitudesCanje', solicitud.id), {
+          status: SOLICITUD_RECHAZADA,
+          resueltoAt: new Date().toISOString(),
+        })
+        return
+      }
+
       let nextPremios = premiosActuales
-      let nextPoints = puntosActuales
       const nextRedeemed = (clienteData.premiosCanjeados ?? 0) + 1
       const batch = writeBatch(db)
 
       if (esCatalogo || premioAsignadoIdx < 0) {
-        if (puntosCosto > 0 && puntosActuales < puntosCosto) {
-          setError('El cliente no tiene puntos suficientes para aprobar este canje.')
-          return
-        }
-
-        nextPoints = Math.max(0, puntosActuales - puntosCosto)
+        // Canje por nivel: no resta puntos; solo marca el premio del nivel.
         nextPremios = [
           ...premiosActuales,
           {
@@ -734,20 +1056,14 @@ const App = () => {
             premioId: solicitud.premioCatalogoId || solicitud.premioId,
             nombre: solicitud.premioNombre,
             descripcion: solicitud.premioDescripcion || '',
-            puntosCosto,
-            nivelId: solicitud.nivelId || 'bronce',
+            puntosCosto: 0,
+            nivelId: nivelSolicitud,
             fechaAsignacion: new Date().toISOString(),
             fechaCanje: new Date().toISOString(),
             status: STATUS_CANJEADO,
             solicitudCanjeId: solicitud.id,
           },
         ]
-
-        batch.update(clienteDocRef, {
-          puntos: nextPoints,
-          premios: nextPremios,
-          premiosCanjeados: nextRedeemed,
-        })
       } else {
         nextPremios = premiosActuales.map((premio) => (
           premio.id === solicitud.premioId
@@ -759,11 +1075,32 @@ const App = () => {
               }
             : premio
         ))
+      }
 
-        batch.update(clienteDocRef, {
-          premios: nextPremios,
-          premiosCanjeados: nextRedeemed,
-        })
+      const updates = buildClienteUpdatesTrasCanjeAprobado({
+        puntosTrasCanje: puntosActuales,
+        premiosTrasCanje: nextPremios,
+        premiosCanjeados: nextRedeemed,
+        levels: clientLevels,
+      })
+      const { reinicioCiclo, ...clienteUpdates } = updates
+      delete clienteUpdates.motivoCierre
+
+      batch.update(clienteDocRef, clienteUpdates)
+
+      if (reinicioCiclo) {
+        solicitudesPendientes
+          .filter((item) => (
+            item.id !== solicitud.id
+            && item.clienteId === solicitud.clienteId
+          ))
+          .forEach((item) => {
+            batch.update(doc(db, 'solicitudesCanje', item.id), {
+              status: SOLICITUD_RECHAZADA,
+              resueltoAt: new Date().toISOString(),
+              motivo: 'ciclo_reiniciado',
+            })
+          })
       }
 
       batch.update(doc(db, 'solicitudesCanje', solicitud.id), {
@@ -772,13 +1109,13 @@ const App = () => {
       })
       await batch.commit()
 
-      sincronizarClienteLocal(solicitud.clienteId, {
-        puntos: nextPoints,
-        premios: nextPremios,
-        premiosCanjeados: nextRedeemed,
-      })
+      sincronizarClienteLocal(solicitud.clienteId, clienteUpdates)
       setSuccessMessage(
-        `Canje aprobado: ${solicitud.clienteNombre} · ${solicitud.premioNombre}`,
+        reinicioCiclo
+          ? `Canje Oro aprobado: ${solicitud.clienteNombre} · Ciclo reiniciado (puntos y compras en cero).`
+          : esCanjeDeNivelMaximo(nivelSolicitud, clientLevels)
+            ? `Canje Oro aprobado: ${solicitud.clienteNombre}. Aún hay premios pendientes; el ciclo se reiniciará al reclamarlos o cuando venzan.`
+            : `Canje aprobado: ${solicitud.clienteNombre} · ${solicitud.premioNombre}`,
       )
     } catch (err) {
       setError('No se pudo aprobar la solicitud de canje.')
@@ -856,11 +1193,11 @@ const App = () => {
     const name = ruleName.trim()
     const description = ruleDescription.trim()
     const threshold = Number(ruleThreshold)
-    const pointsCost = Number(rulePointsCost)
+    const pointsCost = rulePointsCost === '' ? 0 : Number(rulePointsCost)
     const nivelId = obtenerNivelPorId(ruleNivelId, clientLevels).id
 
-    if (!name || !description || Number.isNaN(threshold) || Number.isNaN(pointsCost) || threshold <= 0 || pointsCost <= 0) {
-      setError('Completa todos los campos del premio con valores válidos.')
+    if (!name || !description || Number.isNaN(threshold) || Number.isNaN(pointsCost) || threshold <= 0 || pointsCost < 0) {
+      setError('Completa nombre, descripción, umbral y nivel con valores válidos.')
       return
     }
 
@@ -923,23 +1260,13 @@ const App = () => {
     setError('')
   }
 
-  const handleUpdateClientLevel = (levelId, puntosMinimos) => {
-    const nextPoints = Number(puntosMinimos)
-
-    setClientLevels((currentLevels) => currentLevels.map((level) => (
-      level.id === levelId
-        ? { ...level, puntosMinimos: Number.isNaN(nextPoints) || nextPoints < 0 ? 0 : nextPoints }
-        : level
-    )))
-  }
-
   const handleSaveClientEdit = async (event) => {
     event.preventDefault()
 
     if (!cliente?.id) return
 
     const nombreTrim = editNombre.trim()
-    const telefonoTrim = editTelefono.trim()
+    const telefonoTrim = normalizeClientPhone(editTelefono)
     const passwordRaw = editContraseña.trim()
 
     if (!nombreTrim || !telefonoTrim) {
@@ -963,16 +1290,10 @@ const App = () => {
     setSuccessMessage('')
 
     try {
-      if (telefonoTrim !== (cliente.telefono || '')) {
-        const telefonoQuery = query(
-          collection(db, 'clientes'),
-          where('telefono', '==', telefonoTrim),
-        )
-        const telefonoSnap = await getDocs(telefonoQuery)
-        const telefonoTomado = telefonoSnap.docs.some((clienteDoc) => clienteDoc.id !== cliente.id)
-
-        if (telefonoTomado) {
-          setError('Ese número de teléfono ya pertenece a otro cliente.')
+      if (telefonoTrim !== normalizeClientPhone(cliente.telefono)) {
+        const existente = await findClienteByTelefono(telefonoTrim)
+        if (existente && existente.id !== cliente.id) {
+          setError(MSG_TELEFONO_YA_REGISTRADO_ADMIN)
           return
         }
       }
@@ -1045,7 +1366,7 @@ const App = () => {
     event.preventDefault()
 
     const nombreTrim = nombre.trim()
-    const telefonoTrim = telefonoRegistro.trim()
+    const telefonoTrim = normalizeClientPhone(telefonoRegistro)
     const passwordCheck = validateClientPassword(contraseñaRegistro)
 
     if (!nombreTrim || !telefonoTrim) {
@@ -1065,15 +1386,13 @@ const App = () => {
     setSuccessMessage('')
 
     try {
-      const clientesRef = collection(db, 'clientes')
-      const clientesQuery = query(clientesRef, where('telefono', '==', telefonoTrim))
-      const snapshot = await getDocs(clientesQuery)
-
-      if (!snapshot.empty) {
-        setError('¡Error: Este número de teléfono ya está registrado!')
+      const existente = await findClienteByTelefono(telefonoTrim)
+      if (existente) {
+        setError(MSG_TELEFONO_YA_REGISTRADO_ADMIN)
         return
       }
 
+      const clientesRef = collection(db, 'clientes')
       const contraseñaHash = await hashClientPassword(passwordCheck.password)
 
       await addDoc(clientesRef, {
@@ -1212,6 +1531,27 @@ const App = () => {
   const initials = cliente?.nombre?.charAt(0)?.toUpperCase() ?? 'C'
   const estadoCliente = cliente ? obtenerEstadoCliente(cliente) : ESTADO_ACTIVO
   const clienteEstaInactivo = estadoCliente === ESTADO_INACTIVO
+  const totalClientesActivos = clientesCatalogo.filter(
+    (item) => obtenerEstadoCliente(item) === ESTADO_ACTIVO,
+  ).length
+  const totalClientesInactivos = Math.max(0, clientesCatalogo.length - totalClientesActivos)
+  const clientesVista = useMemo(() => {
+    const texto = filtroTextoClientes.trim().toLowerCase()
+
+    return clientesCatalogo
+      .filter((item) => {
+        const estado = obtenerEstadoCliente(item)
+        if (filtroEstadoClientes === 'activos' && estado !== ESTADO_ACTIVO) return false
+        if (filtroEstadoClientes === 'inactivos' && estado !== ESTADO_INACTIVO) return false
+        if (!texto) return true
+
+        return (
+          String(item.nombre || '').toLowerCase().includes(texto)
+          || String(item.telefono || '').includes(texto)
+        )
+      })
+      .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'))
+  }, [clientesCatalogo, filtroEstadoClientes, filtroTextoClientes])
 
   const getPrizeStatusBadgeClass = (status) => {
     if (status === STATUS_CANJEADO) {
@@ -1392,24 +1732,75 @@ const App = () => {
                   <p className="eyebrow">Consulta rápida</p>
                   <h2>Buscar cliente</h2>
                 </div>
-                <div className="search-chip">Online</div>
+                <div className="search-chip">
+                  {loading ? 'Buscando...' : 'Filtro en vivo'}
+                </div>
               </div>
 
               <label htmlFor="telefono" className="field-label">
                 Número de teléfono
               </label>
-              <input
-                id="telefono"
-                name="telefono"
-                type="tel"
-                value={telefono}
-                onChange={(event) => setTelefono(event.target.value)}
-                placeholder="Ej. 5512345678"
-                className="input-modern"
-              />
+              <div className="search-autocomplete">
+                <input
+                  id="telefono"
+                  name="telefono"
+                  type="tel"
+                  inputMode="tel"
+                  value={telefono}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setTelefono(value)
+                    setError('')
+                    setSuccessMessage('')
 
-              <button type="submit" disabled={loading} className="primary-btn">
-                {loading ? 'Buscando...' : 'Buscar cliente'}
+                    const trimmed = value.trim()
+                    if (!trimmed) {
+                      setCliente(null)
+                      return
+                    }
+
+                    if (cliente && !String(cliente.telefono || '').includes(trimmed)) {
+                      setCliente(null)
+                    }
+                  }}
+                  placeholder="Escribe el teléfono para filtrar..."
+                  className="input-modern"
+                  autoComplete="off"
+                />
+
+                {telefonoFiltro && clientesFiltrados.length > 0 ? (
+                  <ul className="search-suggestions" role="listbox" aria-label="Clientes sugeridos">
+                    {clientesFiltrados.map((item) => {
+                      const seleccionado = cliente?.id === item.id
+                      return (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            className={`search-suggestion-item ${seleccionado ? 'search-suggestion-item-active' : ''}`}
+                            onClick={() => cargarClienteSeleccionado(item)}
+                          >
+                            <span className="search-suggestion-phone">{item.telefono || 'Sin teléfono'}</span>
+                            <span className="search-suggestion-name">{item.nombre || 'Cliente'}</span>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : null}
+
+                {telefonoFiltro && clientesFiltrados.length === 0 && !loading ? (
+                  <p className="search-suggestions-empty">
+                    Ningún cliente coincide con “{telefonoFiltro}”.
+                  </p>
+                ) : null}
+              </div>
+
+              <p className="field-hint">
+                Se filtra solo al escribir. Si el número coincide exacto, el cliente se carga automáticamente.
+              </p>
+
+              <button type="submit" disabled={loading || !telefonoFiltro} className="primary-btn">
+                {loading ? 'Buscando...' : 'Buscar coincidencia exacta'}
               </button>
             </form>
 
@@ -1443,6 +1834,213 @@ const App = () => {
                 >
                   ➕ Registrar cliente
                 </button>
+                <button
+                  type="button"
+                  className="floating-config-btn clients-directory-btn"
+                  onClick={() => {
+                    setShowClientesModal(true)
+                    setError('')
+                    setSuccessMessage('')
+                  }}
+                >
+                  👥 Ver clientes ({clientesCatalogo.length})
+                </button>
+              </div>
+            ) : null}
+
+            {user ? (
+              <div className="secondary-card public-qr-card">
+                <div className="card-title-row">
+                  <div>
+                    <p className="eyebrow">Registro público</p>
+                    <h3>Código QR para clientes</h3>
+                  </div>
+                  <span className="search-chip">Escanear</span>
+                </div>
+                <p className="card-description">
+                  Muestra o comparte este QR para que los clientes abran el sitio público
+                  desde su celular y se registren.
+                </p>
+                <div className="public-qr-layout">
+                  <div className="public-qr-frame" aria-hidden="true">
+                    <QRCodeSVG
+                      value={PUBLIC_SITE_URL}
+                      size={168}
+                      level="M"
+                      includeMargin
+                      bgColor="#ffffff"
+                      fgColor="#0f172a"
+                    />
+                  </div>
+                  <div className="public-qr-meta">
+                    <p className="public-qr-label">Link del sitio público</p>
+                    <a
+                      href={PUBLIC_SITE_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="public-qr-link"
+                    >
+                      {PUBLIC_SITE_URL}
+                    </a>
+                    <div className="public-qr-actions">
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(PUBLIC_SITE_URL)
+                            setQrLinkCopiado(true)
+                            window.setTimeout(() => setQrLinkCopiado(false), 2000)
+                          } catch {
+                            setError('No se pudo copiar el link. Cópialo manualmente.')
+                          }
+                        }}
+                      >
+                        {qrLinkCopiado ? 'Link copiado' : 'Copiar link'}
+                      </button>
+                      <a
+                        href={PUBLIC_SITE_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="ghost-btn public-qr-open-btn"
+                      >
+                        Abrir sitio
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {user && showClientesModal ? (
+              <div
+                className="modal-overlay"
+                onClick={() => setShowClientesModal(false)}
+              >
+                <div
+                  className="config-card modal-card clients-directory-modal"
+                  onClick={(event) => event.stopPropagation()}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="clientes-modal-title"
+                >
+                  <div className="card-title-row">
+                    <div>
+                      <p className="eyebrow">Directorio</p>
+                      <h3 id="clientes-modal-title">Clientes registrados</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="close-modal-btn"
+                      onClick={() => setShowClientesModal(false)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <p className="card-description">
+                    Activos e inactivos. Selecciona uno para cargarlo en el panel.
+                  </p>
+
+                  <div className="clients-directory-stats">
+                    <div className="clients-stat-pill clients-stat-active">
+                      <strong>{totalClientesActivos}</strong>
+                      <span>Activos</span>
+                    </div>
+                    <div className="clients-stat-pill clients-stat-inactive">
+                      <strong>{totalClientesInactivos}</strong>
+                      <span>Inactivos</span>
+                    </div>
+                    <div className="clients-stat-pill clients-stat-total">
+                      <strong>{clientesCatalogo.length}</strong>
+                      <span>Total</span>
+                    </div>
+                  </div>
+
+                  <div className="level-filter-row" role="group" aria-label="Filtrar clientes por estado">
+                    <button
+                      type="button"
+                      className={`level-filter-chip ${filtroEstadoClientes === 'todos' ? 'level-filter-chip-active' : ''}`}
+                      onClick={() => setFiltroEstadoClientes('todos')}
+                    >
+                      Todos
+                    </button>
+                    <button
+                      type="button"
+                      className={`level-filter-chip ${filtroEstadoClientes === 'activos' ? 'level-filter-chip-active' : ''}`}
+                      onClick={() => setFiltroEstadoClientes('activos')}
+                    >
+                      Activos
+                    </button>
+                    <button
+                      type="button"
+                      className={`level-filter-chip ${filtroEstadoClientes === 'inactivos' ? 'level-filter-chip-active' : ''}`}
+                      onClick={() => setFiltroEstadoClientes('inactivos')}
+                    >
+                      Inactivos
+                    </button>
+                  </div>
+
+                  <label className="field-label" htmlFor="filtro-texto-clientes">
+                    Buscar en el directorio
+                  </label>
+                  <input
+                    id="filtro-texto-clientes"
+                    type="search"
+                    value={filtroTextoClientes}
+                    onChange={(event) => setFiltroTextoClientes(event.target.value)}
+                    placeholder="Nombre o teléfono..."
+                    className="input-modern"
+                  />
+
+                  <div className="clients-directory-list clients-directory-list-modal">
+                    {clientesVista.length === 0 ? (
+                      <p className="clients-directory-empty">
+                        No hay clientes que coincidan con este filtro.
+                      </p>
+                    ) : (
+                      clientesVista.map((item) => {
+                        const estadoItem = obtenerEstadoCliente(item)
+                        const puntosItem = item.puntos ?? 0
+                        const nivelItem = obtenerNivelCliente(puntosItem, clientLevels)
+                        const seleccionado = cliente?.id === item.id
+
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={`clients-directory-item ${seleccionado ? 'clients-directory-item-active' : ''}`}
+                            onClick={() => {
+                              setTelefono(String(item.telefono || ''))
+                              setShowClientesModal(false)
+                              cargarClienteSeleccionado(item)
+                            }}
+                          >
+                            <div className="clients-directory-item-main">
+                              <strong>{item.nombre || 'Sin nombre'}</strong>
+                              <span>{item.telefono || 'Sin teléfono'}</span>
+                            </div>
+                            <div className="clients-directory-item-meta">
+                              <span className="clients-directory-points">
+                                {puntosItem.toLocaleString('es-CR')} pts
+                              </span>
+                              <span className="clients-directory-level">{nivelItem}</span>
+                              <span
+                                className={`clients-directory-status ${
+                                  estadoItem === ESTADO_ACTIVO
+                                    ? 'clients-directory-status-active'
+                                    : 'clients-directory-status-inactive'
+                                }`}
+                              >
+                                {estadoItem}
+                              </span>
+                            </div>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
             ) : null}
 
@@ -1483,8 +2081,8 @@ const App = () => {
                   {configModalTab === 'premios' ? (
                     <div className="config-tab-panel">
                       <p className="card-description">
-                        Configura premios por nivel (Bronce, Plata u Oro). El cliente solo puede canjear
-                        premios de su nivel actual o inferiores.
+                        Configura premios por nivel (Bronce, Plata u Oro). El cliente elige un premio
+                        por nivel; canjearlo no resta puntos de su trayectoria.
                       </p>
 
                       <div className="config-grid">
@@ -1578,8 +2176,9 @@ const App = () => {
                             min="0"
                             value={rulePointsCost}
                             onChange={(event) => setRulePointsCost(event.target.value)}
-                            placeholder="Costo en puntos"
+                            placeholder="Costo (opcional, no descuenta)"
                             className="input-modern"
+                            title="Ya no se descuenta de la trayectoria; se mantiene solo como referencia"
                           />
                         </div>
                         <button type="submit" className="secondary-btn">
@@ -1635,7 +2234,7 @@ const App = () => {
                                 <p className="rule-name">{rule.nombre}</p>
                                 <p className="rule-description">{rule.descripcion}</p>
                                 <p className="rule-meta">
-                                  Nivel: {rule.nivelNombre} · Umbral: ₡{rule.umbral.toLocaleString('es-CR')} · Costo: {rule.puntosCosto} pts
+                                  Nivel: {rule.nivelNombre} · Umbral: ₡{rule.umbral.toLocaleString('es-CR')}
                                 </p>
                               </div>
                               <div className="rule-actions">
@@ -1660,25 +2259,53 @@ const App = () => {
                   ) : (
                     <div className="config-tab-panel">
                       <p className="card-description">
-                        Define los puntos mínimos de Bronce, Plata y Oro. Los premios usan estos umbrales
-                        para decidir qué recompensas puede recibir cada cliente.
+                        Edita los puntos mínimos de Bronce, Plata y Oro. Al guardar, la trayectoria
+                        de todos los clientes registrados se recalcula automáticamente con los nuevos umbrales.
+                        Por debajo de Bronce el cliente queda sin nivel.
                       </p>
 
                       <div className="stacked-form">
                         {clientLevels.map((level) => (
                           <label key={level.id} className="field-label" htmlFor={`nivel-${level.id}`}>
-                            {level.nombre}
+                            {level.nombre} (puntos mínimos)
                             <input
                               id={`nivel-${level.id}`}
                               type="number"
-                              min="0"
+                              min="1"
                               value={level.puntosMinimos}
                               onChange={(event) => handleUpdateClientLevel(level.id, event.target.value)}
                               placeholder={`Puntos requeridos para ${level.nombre}`}
                               className="input-modern mt-2"
+                              disabled={levelsSaving}
                             />
                           </label>
                         ))}
+                      </div>
+
+                      <p className="field-hint">
+                        Debe cumplirse: Bronce &lt; Plata &lt; Oro. Actual:{' '}
+                        {clientLevels.map((level) => `${level.nombre} ${level.puntosMinimos}`).join(' · ')}
+                      </p>
+
+                      <div className="public-qr-actions" style={{ marginTop: 12 }}>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={handleSaveClientLevels}
+                          disabled={levelsSaving}
+                        >
+                          {levelsSaving
+                            ? 'Guardando y ajustando trayectorias...'
+                            : 'Guardar niveles y ajustar trayectorias'}
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={handleRestoreDefaultLevels}
+                          disabled={levelsSaving}
+                        >
+                          Restaurar 10 / 30 / 50
+                        </button>
                       </div>
 
                       <div className="level-prize-summary">
@@ -1687,7 +2314,10 @@ const App = () => {
                           return (
                             <div key={level.id} className="level-prize-summary-item">
                               <strong>{level.nombre}</strong>
-                              <span>{count} premio{count === 1 ? '' : 's'} configurado{count === 1 ? '' : 's'}</span>
+                              <span>
+                                Desde {level.puntosMinimos.toLocaleString('es-CR')} pts · {count} premio
+                                {count === 1 ? '' : 's'}
+                              </span>
                             </div>
                           )
                         })}
@@ -1916,7 +2546,7 @@ const App = () => {
                         className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
                           clienteEstaInactivo
                             ? 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60'
-                            : 'bg-red-600 text-white hover:bg-red-700 disabled:opacity-60'
+                            : 'bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60'
                         }`}
                       >
                         {updatingPoints
@@ -1924,6 +2554,14 @@ const App = () => {
                           : clienteEstaInactivo
                             ? 'Activar Cliente'
                             : 'Desactivar Cliente'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeleteCliente}
+                        disabled={updatingPoints || editClientLoading}
+                        className="rounded-xl bg-red-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-red-800 disabled:opacity-60"
+                      >
+                        Eliminar cliente
                       </button>
                     </div>
                   </div>
@@ -2082,15 +2720,21 @@ const App = () => {
                     <span className="points-pill">{puntosDisponibles} pts</span>
                   </div>
                   <p className="card-description">
-                    Solo se pueden asignar premios del nivel del cliente o inferiores. Al asignar se
-                    descuentan puntos y quedan 30 días para canjear.
+                    Un premio por nivel. Asignar o canjear no descuenta puntos: la trayectoria solo
+                    avanza con las compras del cliente.
                   </p>
 
                   <div className="prizes-list">
                     {availablePrizeRules.map((premio) => {
                       const alcanzaNivel = premio.nivelAlcanzado !== false
-                      const alcanzaPuntos = puntosDisponibles >= (premio.puntosCosto ?? premio.costo)
-                      const esAsignable = alcanzaNivel && alcanzaPuntos
+                      const nivelOcupado = obtenerNivelesCanjeados(cliente?.premios).has(
+                        premio.nivelId || 'bronce',
+                      ) || normalizeClientPremios(cliente?.premios).some((item) => (
+                        (item.nivelId || 'bronce') === (premio.nivelId || 'bronce')
+                        && item.status !== STATUS_CANJEADO
+                        && item.status !== STATUS_VENCIDO
+                      ))
+                      const esAsignable = alcanzaNivel && !nivelOcupado
 
                       return (
                         <button
@@ -2102,9 +2746,9 @@ const App = () => {
                           title={
                             !alcanzaNivel
                               ? `Requiere nivel ${premio.nivelNombre}`
-                              : !alcanzaPuntos
-                                ? 'Puntos insuficientes'
-                                : 'Asignar premio'
+                              : nivelOcupado
+                                ? 'Este nivel ya tiene premio elegido/canjeado'
+                                : 'Asignar premio del nivel'
                           }
                         >
                           <div>
@@ -2113,9 +2757,10 @@ const App = () => {
                             <p className="prize-level-meta">
                               Nivel {premio.nivelNombre}
                               {!alcanzaNivel ? ' · No disponible para este cliente' : ''}
+                              {nivelOcupado ? ' · Nivel ya utilizado' : ''}
                             </p>
                           </div>
-                          <span className="prize-cost">{premio.puntosCosto ?? premio.costo} pts</span>
+                          <span className="prize-cost">{premio.nivelNombre}</span>
                         </button>
                       )
                     })}
@@ -2235,6 +2880,8 @@ const App = () => {
               {solicitudActiva.clienteNombre} desea canjear {solicitudActiva.premioNombre}
             </h3>
             <p className="canje-toast-meta">
+              Nivel {solicitudActiva.nivelId || 'bronce'} · No descuenta puntos
+              {' · '}
               {solicitudActiva.fecha
                 ? new Date(solicitudActiva.fecha).toLocaleString('es-CR')
                 : 'Ahora'}
