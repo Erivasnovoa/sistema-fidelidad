@@ -1,13 +1,26 @@
-name: Prueba de Ejecucion
+name: Build de React + Vite
 
-on: [push]
+on:
+  push:
+    branches: [ "main" ]
 
 jobs:
-  verificar-sistema:
+  build:
     runs-on: ubuntu-latest
-    steps:
-      - name: Descargar codigo
-        uses: actions/checkout@v4
 
-      - name: Mensaje de confirmacion
-        run: echo "¡El sistema de GitHub Actions ya esta activo y funcionando!"
+    steps:
+    - name: Descargar el código
+      uses: actions/checkout@v4
+
+    - name: Configurar Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+
+    - name: Instalar dependencias
+      run: npm install
+
+    - name: Compilar aplicación (Build)
+      run: npm run build
+
