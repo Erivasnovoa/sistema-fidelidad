@@ -243,6 +243,11 @@ const App = () => {
   const [editTelefono, setEditTelefono] = useState('')
   const [editContraseña, setEditContraseña] = useState('')
   const [editClientLoading, setEditClientLoading] = useState(false)
+  const [showTransactionsModal, setShowTransactionsModal] = useState(false)
+  const [transaccionesCliente, setTransaccionesCliente] = useState([])
+  const [showEditPointsModal, setShowEditPointsModal] = useState(false)
+  const [editPointsValue, setEditPointsValue] = useState('')
+  const [editPointsLoading, setEditPointsLoading] = useState(false)
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [showAuthModal, setShowAuthModal] = useState(false)
@@ -270,6 +275,8 @@ const App = () => {
         setShowConfigModal(false)
         setShowRegisterModal(false)
         setShowEditClientModal(false)
+        setShowTransactionsModal(false)
+        setShowEditPointsModal(false)
         setShowClientesModal(false)
         setSolicitudesPendientes([])
       }
@@ -300,6 +307,28 @@ const App = () => {
 
     return unsubscribe
   }, [user])
+
+  useEffect(() => {
+    if (!user || !cliente?.id || !showTransactionsModal) {
+      return undefined
+    }
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'clientes', cliente.id, 'transacciones'),
+      (snapshot) => {
+        const items = snapshot.docs
+          .map((transactionDoc) => ({ id: transactionDoc.id, ...transactionDoc.data() }))
+          .sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0))
+        setTransaccionesCliente(items)
+      },
+      (err) => {
+        console.error(err)
+        setError('No se pudieron cargar las transacciones del cliente.')
+      },
+    )
+
+    return unsubscribe
+  }, [user, cliente?.id, showTransactionsModal])
 
   useEffect(() => {
     if (!user) return undefined
@@ -371,6 +400,8 @@ const App = () => {
       setShowConfigModal(false)
       setShowRegisterModal(false)
       setShowEditClientModal(false)
+      setShowTransactionsModal(false)
+      cerrarEditPointsModal()
       setVistaActual('cliente')
     } catch (err) {
       console.error(err)
@@ -384,6 +415,20 @@ const App = () => {
     setEditTelefono('')
     setEditContraseña('')
     setEditClientLoading(false)
+  }
+
+  const cerrarEditPointsModal = () => {
+    setShowEditPointsModal(false)
+    setEditPointsValue('')
+    setEditPointsLoading(false)
+  }
+
+  const abrirEditPointsModal = () => {
+    if (!cliente) return
+    setEditPointsValue(String(cliente.puntos ?? 0))
+    setError('')
+    setSuccessMessage('')
+    setShowEditPointsModal(true)
   }
 
   const abrirEditClientModal = () => {
@@ -400,6 +445,8 @@ const App = () => {
     setMontoCompraAsignacion('')
     setContraseñaClienteAdmin('')
     setShowEditClientModal(false)
+    cerrarEditPointsModal()
+    setShowTransactionsModal(false)
     setEditNombre('')
     setEditTelefono('')
     setEditContraseña('')
@@ -565,6 +612,42 @@ const App = () => {
       return false
     } finally {
       setUpdatingPoints(false)
+    }
+  }
+
+  const handleSavePointsEdit = async (event) => {
+    event.preventDefault()
+    if (!cliente?.id) return
+
+    const puntos = Number(editPointsValue)
+    if (!Number.isFinite(puntos) || puntos < 0 || !Number.isInteger(puntos)) {
+      setError('Ingresa una cantidad entera de puntos igual o mayor que cero.')
+      return
+    }
+
+    setEditPointsLoading(true)
+    setError('')
+    setSuccessMessage('')
+
+    try {
+      const trayectoria = buildTrayectoriaCliente(puntos, clientLevels)
+      const updates = {
+        puntos,
+        trayectoria,
+        nivelId: trayectoria.nivelId,
+        nivelNombre: trayectoria.nivelNombre,
+      }
+      await updateDoc(doc(db, 'clientes', cliente.id), updates)
+      setCliente((currentCliente) => (
+        currentCliente ? { ...currentCliente, ...updates } : currentCliente
+      ))
+      cerrarEditPointsModal()
+      setSuccessMessage('Puntos del cliente actualizados correctamente.')
+    } catch (err) {
+      setError('No se pudieron actualizar los puntos del cliente.')
+      console.error(err)
+    } finally {
+      setEditPointsLoading(false)
     }
   }
 
@@ -752,6 +835,8 @@ const App = () => {
       setMontoCompraAsignacion('')
       setContraseñaClienteAdmin('')
       setShowEditClientModal(false)
+      setShowTransactionsModal(false)
+      cerrarEditPointsModal()
       setSuccessMessage(`Cliente "${nombreCliente}" eliminado correctamente.`)
     } catch (err) {
       setError('No se pudo eliminar el cliente. Intenta nuevamente.')
@@ -791,12 +876,22 @@ const App = () => {
       const nextPoints = (cliente.puntos ?? 0) + asignacion.puntos
       const fechaUltimaCompra = new Date().toISOString()
 
-      await updateDoc(clienteDocRef, {
+      const compra = {
+        tipo: 'compra',
+        monto: asignacion.montoCompra,
+        puntosOtorgados: asignacion.puntos,
+        montoPendientePuntos: asignacion.montoPendienteNuevo,
+        fecha: fechaUltimaCompra,
+      }
+      const batch = writeBatch(db)
+      batch.update(clienteDocRef, {
         puntos: nextPoints,
         montoPendientePuntos: asignacion.montoPendienteNuevo,
         fechaUltimaCompra,
         estado: ESTADO_ACTIVO,
       })
+      batch.set(doc(collection(db, 'clientes', cliente.id, 'transacciones')), compra)
+      await batch.commit()
 
       setCliente((currentCliente) => (
         currentCliente
@@ -2446,6 +2541,139 @@ const App = () => {
               </div>
             ) : null}
 
+            {user && showTransactionsModal && cliente ? (
+              <div className="modal-overlay" onClick={() => setShowTransactionsModal(false)}>
+                <div
+                  className="config-card modal-card w-full max-w-2xl"
+                  onClick={(event) => event.stopPropagation()}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="transactions-modal-title"
+                >
+                  <div className="card-title-row">
+                    <div>
+                      <p className="eyebrow">Historial de compras</p>
+                      <h3 id="transactions-modal-title">Transacciones de {cliente.nombre || 'cliente'}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="close-modal-btn"
+                      onClick={() => setShowTransactionsModal(false)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="card-description">
+                    Monto, fecha y puntos otorgados por cada compra registrada desde ahora.
+                  </p>
+
+                  <div className="mt-4 max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+                    {transaccionesCliente.length === 0 ? (
+                      <p className="clients-directory-empty">
+                        Aún no hay compras registradas para este cliente.
+                      </p>
+                    ) : (
+                      transaccionesCliente.map((transaccion) => {
+                        const fecha = new Date(transaccion.fecha)
+                        const fechaValida = !Number.isNaN(fecha.getTime())
+                        return (
+                          <article
+                            key={transaccion.id}
+                            className="rounded-2xl border border-violet-100 bg-violet-50/50 p-4"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <p className="text-lg font-bold text-slate-900">
+                                  ${(Number(transaccion.monto) || 0).toLocaleString('es-CR')}
+                                </p>
+                                <p className="mt-1 text-sm text-slate-600">
+                                  {fechaValida
+                                    ? fecha.toLocaleString('es-CR', {
+                                      dateStyle: 'medium',
+                                      timeStyle: 'short',
+                                    })
+                                    : 'Fecha no disponible'}
+                                </p>
+                              </div>
+                              <span className="rounded-full bg-violet-200 px-3 py-1 text-xs font-bold text-violet-800">
+                                +{(Number(transaccion.puntosOtorgados) || 0).toLocaleString('es-CR')} pts
+                              </span>
+                            </div>
+                          </article>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {user && showEditPointsModal && cliente ? (
+              <div
+                className="modal-overlay"
+                onClick={() => {
+                  if (!editPointsLoading) cerrarEditPointsModal()
+                }}
+              >
+                <div
+                  className="config-card modal-card"
+                  onClick={(event) => event.stopPropagation()}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="edit-points-modal-title"
+                >
+                  <div className="card-title-row">
+                    <div>
+                      <p className="eyebrow">Ajuste manual</p>
+                      <h3 id="edit-points-modal-title">Editar puntos de {cliente.nombre || 'cliente'}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      className="close-modal-btn"
+                      disabled={editPointsLoading}
+                      onClick={cerrarEditPointsModal}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="card-description">
+                    Define el saldo total de puntos. El nivel y la trayectoria se recalcularán automáticamente.
+                  </p>
+
+                  <form className="stacked-form" onSubmit={handleSavePointsEdit}>
+                    <label className="field-label" htmlFor="edit-client-points">
+                      Puntos disponibles
+                    </label>
+                    <input
+                      id="edit-client-points"
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputMode="numeric"
+                      value={editPointsValue}
+                      onChange={(event) => setEditPointsValue(event.target.value)}
+                      className="input-modern"
+                      disabled={editPointsLoading}
+                      autoFocus
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button type="submit" className="primary-btn" disabled={editPointsLoading}>
+                        {editPointsLoading ? 'Guardando...' : 'Guardar puntos'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        disabled={editPointsLoading}
+                        onClick={cerrarEditPointsModal}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            ) : null}
+
             {user && showRegisterModal ? (
               <div
                 className="modal-overlay"
@@ -2538,6 +2766,25 @@ const App = () => {
                         className="rounded-xl bg-sky-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
                       >
                         Editar cliente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('')
+                          setSuccessMessage('')
+                          setShowTransactionsModal(true)
+                        }}
+                        className="rounded-xl bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-violet-700"
+                      >
+                        Ver transacciones
+                      </button>
+                      <button
+                        type="button"
+                        onClick={abrirEditPointsModal}
+                        disabled={updatingPoints || editPointsLoading}
+                        className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        Editar puntos
                       </button>
                       <button
                         type="button"
